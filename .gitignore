@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+uv.lock
+
+# Local configuration and secrets -- .env.example is committed, .env never is.
+.env
+*.pem
+
+# Audit write-ahead spill files (see audit/wal.py)
+*.wal
+wal/
+
+# Model artifacts are baked into the image at build time (phase 4), never committed.
+models/
+*.onnx
