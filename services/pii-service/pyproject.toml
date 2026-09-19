@@ -40,6 +40,11 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
     "httpx>=0.28",
+    # Lets the audit sink's batching, fail-open and WAL-replay logic be tested
+    # against a real SQLAlchemy async engine without a Postgres container.
+    "aiosqlite>=0.20",
+    # A hung test must fail, not silently consume the whole CI run.
+    "pytest-timeout>=2.3",
     "ruff>=0.8",
     "mypy>=1.13",
     "types-PyYAML",
@@ -58,6 +63,7 @@ packages = ["src/pii_service"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+timeout = 60
 filterwarnings = ["error::DeprecationWarning:pii_service.*"]
 
 [tool.ruff]
