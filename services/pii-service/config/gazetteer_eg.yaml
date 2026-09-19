@@ -45,8 +45,22 @@ governorates:
   - { code: "34", ar: "شمال سيناء", en: "North Sinai" }
   - { code: "35", ar: "جنوب سيناء", en: "South Sinai" }
 
-# Words that open an address component. A match needs at least one of these --
-# a governorate name on its own is a place, not an address.
+# Which marker groups are strong enough to define an address on their own.
+#
+# The `area` group is deliberately excluded. Its words -- مدينة (city), حي
+# (district), منطقة (area) -- are ordinary nouns, so requiring only one of them
+# reports "القاهرة مدينة كبيرة" ("Cairo is a big city") as an address. A real
+# address carries a street, building, unit or postal component; an area without
+# one is a place, which is AR_LOCATION's job, not EG_ADDRESS's.
+address_marker_groups:
+  - street
+  - building
+  - unit
+  - postal
+
+# Words that open an address component. A match needs at least one from a group
+# listed in address_marker_groups -- a governorate name on its own is a place,
+# not an address.
 structural_markers:
   street:
     - "شارع"

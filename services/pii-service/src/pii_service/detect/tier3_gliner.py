@@ -67,11 +67,9 @@ class GlinerRecognizer(EntityRecognizer):
         supported_entities: Sequence[str] = tuple(LABEL_PROMPTS),
         threshold: float = 0.5,
     ) -> None:
-        super().__init__(
-            supported_entities=list(supported_entities),
-            supported_language=supported_language,
-            name=_RECOGNIZER_NAME,
-        )
+        # Set before super().__init__(): Presidio's EntityRecognizer.__init__
+        # calls self.load(), which reads self._model_name. See the equivalent
+        # comment in tier2_arabic_ner.py.
         self._model_name: Final = model_name
         self._threshold: Final = threshold
         self._model: object | None = None
@@ -80,6 +78,11 @@ class GlinerRecognizer(EntityRecognizer):
             for entity, prompt in LABEL_PROMPTS.items()
             if entity in supported_entities
         }
+        super().__init__(
+            supported_entities=list(supported_entities),
+            supported_language=supported_language,
+            name=_RECOGNIZER_NAME,
+        )
 
     def load(self) -> None:
         try:

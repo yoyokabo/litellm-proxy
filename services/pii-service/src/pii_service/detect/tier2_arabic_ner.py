@@ -91,16 +91,20 @@ class ArabicNerRecognizer(EntityRecognizer):
         supported_entities: Sequence[str] = tuple(dict.fromkeys(LABEL_MAP.values())),
         score_floor: float = 0.5,
     ) -> None:
-        super().__init__(
-            supported_entities=list(supported_entities),
-            supported_language=supported_language,
-            name=_NER_RECOGNIZER_NAME,
-        )
+        # Every attribute load() touches must exist BEFORE super().__init__(),
+        # because Presidio's EntityRecognizer.__init__ calls self.load() itself.
+        # Assigning them afterwards raises AttributeError on construction, which
+        # is how tier 2 would have failed the moment anyone enabled it.
         self._model_dir: Final = model_dir
         self._score_floor: Final = score_floor
         self._session: object | None = None
         self._tokenizer: object | None = None
         self._labels: list[str] = []
+        super().__init__(
+            supported_entities=list(supported_entities),
+            supported_language=supported_language,
+            name=_NER_RECOGNIZER_NAME,
+        )
 
     def load(self) -> None:
         """Load the ONNX session and tokenizer. Called once by Presidio."""
@@ -271,15 +275,23 @@ class EgyptianAddressRecognizer(ContextBoostedPatternRecognizer):
         supported_language: str,
     ) -> None:
         gazetteer = policy.gazetteer
-        markers = gazetteer.all_markers
+        markers = gazetteer.address_markers
         places = tuple(gazetteer.governorate_names) + tuple(gazetteer.localities)
 
         marker_alternation = "|".join(_escape(m) for m in markers)
         place_alternation = "|".join(_escape(p) for p in sorted(places, key=len, reverse=True))
 
-        # marker + up to ~6 words, optionally running on to a known place.
+        # An optional house number, then a marker at a word boundary, then up
+        # to ~6 words, optionally running on to a known place.
+        #
+        # The \b is load-bearing. `ش` is the near-universal abbreviation for
+        # شارع and is a single letter, so without a boundary it matches the
+        # final letter of any word ending in shin -- "أنا عايش في القاهرة"
+        # ("I live in Cairo") was reported as an address, which is exactly the
+        # non-PII sentence the brief says must not match.
         pattern = (
-            rf"(?:{marker_alternation})\s+"
+            rf"(?:\d{{1,4}}\s+)?"
+            rf"\b(?:{marker_alternation})\s+"
             rf"[^\n،,.;]{{2,60}}"
             rf"(?:[،,]\s*(?:{place_alternation}))?"
         )
@@ -354,9 +366,10 @@ def build_tier2_factory(settings: Settings) -> object:
         recognizers: list[EntityRecognizer] = [
             EgyptianAddressRecognizer(policy=policy, supported_language=language)
         ]
-        ner = ArabicNerRecognizer(model_dir=model_dir, supported_language=language)
-        ner.load()
-        recognizers.append(ner)
+        # Presidio's EntityRecognizer.__init__ calls load(), so constructing
+        # this is what loads the ONNX session -- and what raises
+        # Tier2Unavailable if the artifact is missing. No second load() call.
+        recognizers.append(ArabicNerRecognizer(model_dir=model_dir, supported_language=language))
         return recognizers
 
     return factory

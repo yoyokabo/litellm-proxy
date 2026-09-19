@@ -27,10 +27,14 @@ RUN --mount=type=cache,target=/var/cache/apt \
         build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
+# uv from PyPI rather than `COPY --from=ghcr.io/astral-sh/uv`. One registry
+# instead of two: an air-gapped build already needs a PyPI mirror, and adding a
+# container registry to that list is a second thing to mirror and a second
+# thing to be blocked by.
+RUN pip install --no-cache-dir "uv>=0.5,<1.0"
 
 WORKDIR /build
-COPY pyproject.toml README.md ./
+COPY pyproject.toml ./
 COPY src ./src
 
 # Resolve into a self-contained venv so the runtime stage needs no compiler.

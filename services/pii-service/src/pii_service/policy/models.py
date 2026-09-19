@@ -196,6 +196,9 @@ class GazetteerFile(_Strict):
     version: int
     governorates: list[Governorate]
     structural_markers: dict[str, list[str]]
+    address_marker_groups: list[str] = Field(
+        default_factory=lambda: ["street", "building", "unit", "postal"]
+    )
     localities: list[str] = Field(default_factory=list)
     context_terms: dict[str, list[str]] = Field(default_factory=dict)
 
@@ -203,6 +206,20 @@ class GazetteerFile(_Strict):
     def all_markers(self) -> tuple[str, ...]:
         """Every structural marker, longest first so a greedy match wins."""
         seen: list[str] = [m for markers in self.structural_markers.values() for m in markers]
+        return tuple(sorted(set(seen), key=len, reverse=True))
+
+    @property
+    def address_markers(self) -> tuple[str, ...]:
+        """Only the markers strong enough to define an address on their own.
+
+        Excludes the `area` group by default: those are ordinary nouns, and
+        matching on one alone turns "Cairo is a big city" into an address.
+        """
+        seen: list[str] = [
+            marker
+            for group in self.address_marker_groups
+            for marker in self.structural_markers.get(group, [])
+        ]
         return tuple(sorted(set(seen), key=len, reverse=True))
 
     @property

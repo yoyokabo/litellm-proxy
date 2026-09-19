@@ -1,0 +1,19 @@
+# Keep the build context small and reproducible. Without this, the local
+# development venv (hundreds of MB) is uploaded to the daemon on every build,
+# and a stale .env could be baked into an image layer.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.env
+*.wal
+wal/
+tests/

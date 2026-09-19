@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Test-only. The real pepper comes from a secrets manager at deploy time and
+  # never from a repository file -- see README, "Generating the audit pepper".
+  TEST_PEPPER: 0123456789abcdef0123456789abcdef
+
+jobs:
+  service:
+    name: pii-service (lint, types, unit + PostgreSQL)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pii
+          POSTGRES_PASSWORD: pii
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pii"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: services/pii-service
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e ".[dev,ner]"
+
+      - name: Lint
+        run: |
+          .venv/bin/python -m ruff check src tests
+          .venv/bin/python -m ruff format --check src tests
+
+      - name: Types
+        run: .venv/bin/python -m mypy
+
+      - name: Unit tests
+        run: .venv/bin/python -m pytest -q
+
+      # The rest of the suite runs on SQLite. These are the tests that can only
+      # tell the truth against the database we actually ship against: the
+      # migration, the DESC indexes, BIGSERIAL, and psycopg's type round trip.
+      - name: PostgreSQL integration tests
+        env:
+          PII_TEST_DATABASE_URL: postgresql+psycopg://pii:pii@localhost:5432/postgres
+        run: .venv/bin/python -m pytest tests/test_postgres_integration.py -q
+
+      - name: Benchmark smoke run
+        run: cd ../.. && services/pii-service/.venv/bin/python scripts/benchmark.py --iterations 50
+
+  guardrail:
+    name: litellm guardrail (lint + contract tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/litellm-pii-guardrail
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python \
+            litellm==1.101.0 pytest pytest-asyncio pytest-timeout respx httpx ruff
+
+      - name: Lint
+        run: cd ../.. && services/litellm-pii-guardrail/.venv/bin/python -m ruff check scripts services/litellm-pii-guardrail
+
+      # These drive litellm's real translation handler. If a litellm upgrade
+      # changes how apply_guardrail's return value is mapped back onto the
+      # request, this is what catches it -- and the failure mode it guards
+      # against is silent: masking that never reaches the model.
+      - name: Contract tests
+        run: .venv/bin/python -m pytest -q
+
+  compose:
+    name: docker compose builds and serves
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write .env
+        run: |
+          cp .env.example .env
+          sed -i "s|^PII_AUDIT_PEPPER=.*|PII_AUDIT_PEPPER=$(openssl rand -hex 32)|" .env
+          sed -i "s|^PII_DB_PASSWORD=.*|PII_DB_PASSWORD=$(openssl rand -hex 24)|" .env
+
+      - name: Validate the compose file
+        run: docker compose config --quiet
+
+      # The compose file attaches to a LiteLLM deployment it does not own, so
+      # the network is external. CI has no LiteLLM, so it stands one in.
+      - name: Create the external litellm network
+        run: docker network create litellm
+
+      - name: Build
+        run: docker compose build
+
+      - name: No PyTorch in the runtime image
+        run: |
+          docker compose run --rm --no-deps --entrypoint sh pii-service -c \
+            'ls /opt/venv/lib/python3.11/site-packages | grep -qiE "^(torch|transformers)" && exit 1 || exit 0'
+
+      - name: Up
+        run: docker compose up -d --wait --wait-timeout 180
+
+      - name: Migration reached head
+        run: |
+          docker compose exec -T pii-db \
+            psql -U pii -d pii -tAc "SELECT version_num FROM alembic_version" | grep -q 0001_initial
+
+      - name: Service answers and masks
+        run: |
+          docker compose exec -T pii-service python - <<'PY'
+          import json, urllib.request
+          body = json.dumps({
+              "request_id": "ci-smoke",
+              "texts": ["الرقم القومي 28503122148219"],
+              "identity": {"user_id": "ci"},
+          }).encode()
+          request = urllib.request.Request(
+              "http://127.0.0.1:8090/analyze", data=body,
+              headers={"content-type": "application/json"})
+          result = json.load(urllib.request.urlopen(request, timeout=20))
+          assert "28503122148219" not in result["texts"][0], result
+          assert "<EG_NATIONAL_ID>" in result["texts"][0], result
+          print("masked:", result["texts"][0])
+          PY
+
+      - name: An audit row landed, without the value
+        run: |
+          sleep 3
+          docker compose exec -T pii-db psql -U pii -d pii -tAc \
+            "SELECT entity_type, user_id, preview FROM pii_events" | tee /tmp/rows
+          grep -q 'EG_NATIONAL_ID|ci|' /tmp/rows
+          ! grep -q '28503122148219' /tmp/rows
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Down
+        if: always()
+        run: docker compose down -v
