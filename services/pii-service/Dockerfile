@@ -22,23 +22,46 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy
 
-RUN --mount=type=cache,target=/var/cache/apt \
-    apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# No apt, and no compiler. Every runtime dependency resolves to a wheel
+# (presidio, spaCy, pydantic, psycopg[binary], onnxruntime), so the build needs
+# a PyPI mirror and nothing else. An air-gapped site that has to mirror Debian's
+# archives as well to build this image is a site that will not build it.
+
+# Building behind an internal mirror and/or a TLS-intercepting proxy, which is
+# the normal case at the sites this ships to:
+#
+#   docker build \
+#     --secret id=pip_ca,src=/etc/ssl/certs/corporate-ca.pem \
+#     --build-arg PIP_INDEX_URL=https://nexus.internal/repository/pypi/simple \
+#     .
+#
+# Both are optional. With no secret and no build arg the build uses PyPI and
+# the image's own trust store, so nothing here is required in a normal network.
+ARG PIP_INDEX_URL=""
+ARG PIP_TRUSTED_HOST=""
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 
 # uv from PyPI rather than `COPY --from=ghcr.io/astral-sh/uv`. One registry
 # instead of two: an air-gapped build already needs a PyPI mirror, and adding a
 # container registry to that list is a second thing to mirror and a second
 # thing to be blocked by.
-RUN pip install --no-cache-dir "uv>=0.5,<1.0"
+RUN --mount=type=secret,id=pip_ca \
+    if [ -s /run/secrets/pip_ca ]; then \
+        export PIP_CERT=/run/secrets/pip_ca SSL_CERT_FILE=/run/secrets/pip_ca; \
+    fi; \
+    pip install --no-cache-dir "uv>=0.5,<1.0"
 
 WORKDIR /build
 COPY pyproject.toml ./
 COPY src ./src
 
 # Resolve into a self-contained venv so the runtime stage needs no compiler.
-RUN uv venv /opt/venv \
+RUN --mount=type=secret,id=pip_ca \
+    if [ -s /run/secrets/pip_ca ]; then \
+        export SSL_CERT_FILE=/run/secrets/pip_ca UV_NATIVE_TLS=1; \
+    fi; \
+    uv venv /opt/venv \
     && VIRTUAL_ENV=/opt/venv uv pip install --no-cache .
 
 # ---------------------------------------------------------------------------
@@ -51,12 +74,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PII_CONFIG_DIR=/app/config \
     PII_AUDIT_WAL_PATH=/var/lib/pii-service/wal
 
-# curl for the container healthcheck only. Everything else stays out.
-RUN --mount=type=cache,target=/var/cache/apt \
-    apt-get update && apt-get install -y --no-install-recommends \
-        curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin pii
+# useradd ships in the base image; nothing here needs apt.
+RUN useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin pii
 
 COPY --from=builder /opt/venv /opt/venv
 
@@ -74,8 +93,12 @@ EXPOSE 8090
 
 # /livez never touches the database, so a database outage does not restart a
 # service that is still masking correctly and spilling to the WAL.
+#
+# Python rather than curl: the interpreter is already here, and installing curl
+# would mean an apt step, which means mirroring Debian's archives for an
+# air-gapped build. One less thing in the image and one less thing to mirror.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8090/livez || exit 1
+    CMD ["python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8090/livez', timeout=3)"]
 
 CMD ["uvicorn", "pii_service.main:get_app", "--factory", \
      "--host", "0.0.0.0", "--port", "8090", "--no-server-header"]

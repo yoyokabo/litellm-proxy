@@ -47,6 +47,7 @@ services:
   pii-migrate:
     build:
       context: ./services/pii-service
+      secrets: [pip_ca]
     image: pii-service:${PII_IMAGE_TAG:-0.1.0}
     container_name: pii-migrate
     restart: "no"
@@ -66,6 +67,7 @@ services:
   pii-service:
     build:
       context: ./services/pii-service
+      secrets: [pip_ca]
     image: pii-service:${PII_IMAGE_TAG:-0.1.0}
     container_name: pii-service
     restart: unless-stopped
@@ -106,6 +108,13 @@ services:
     # and the guardrail both reach it over the docker network.
     # ports:
     #   - "127.0.0.1:8090:8090"
+
+# Build-time only. Set PIP_CA_BUNDLE when an internal TLS-intercepting proxy
+# sits in front of PyPI; the default is an empty file, which the Dockerfile
+# treats as "no custom CA".
+secrets:
+  pip_ca:
+    file: ${PIP_CA_BUNDLE:-/dev/null}
 
 volumes:
   pii-db-data:

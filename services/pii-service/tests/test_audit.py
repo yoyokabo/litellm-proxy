@@ -421,3 +421,66 @@ def test_record_timestamp_is_timezone_aware(policy: object) -> None:
     record = AuditRecord.from_prepared(_prepared(policy), RequestContext(request_id="r"))
     assert record.ts.tzinfo is not None
     assert record.ts.astimezone(UTC) <= datetime.now(UTC)
+
+
+# ---------------------------------------------------------------------------
+# Settings parsed from the environment
+# ---------------------------------------------------------------------------
+
+
+def test_languages_parses_from_a_comma_separated_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The container sets PII_LANGUAGES=en,ar, and that must not crash.
+
+    pydantic-settings JSON-decodes complex-typed values coming from the
+    environment before any validator runs, so without NoDecode this raises
+    SettingsError. It is invisible in tests that construct Settings with
+    keyword arguments -- it only appears once the variable is really set, which
+    in practice means only inside the container.
+    """
+    monkeypatch.setenv("PII_AUDIT_PEPPER", "a" * 32)
+    monkeypatch.setenv("PII_LANGUAGES", "en,ar")
+
+    assert Settings().languages == ("en", "ar")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("ar", ("ar",)), ("en, ar", ("en", "ar")), ("en , ar , fr", ("en", "ar", "fr"))],
+)
+def test_languages_tolerates_spacing(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: tuple[str, ...]
+) -> None:
+    monkeypatch.setenv("PII_AUDIT_PEPPER", "a" * 32)
+    monkeypatch.setenv("PII_LANGUAGES", raw)
+    assert Settings().languages == expected
+
+
+def test_every_env_var_the_compose_file_sets_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Construct Settings exactly as docker-compose.yml would.
+
+    Catches the whole class of bug above: a field whose type cannot be parsed
+    from the string form the compose file actually supplies.
+    """
+    for name, value in {
+        "PII_AUDIT_PEPPER": "b" * 32,
+        "PII_DATABASE_URL": "postgresql+psycopg://pii:pw@pii-db:5432/pii",
+        "PII_LOG_LEVEL": "INFO",
+        "PII_LANGUAGES": "en,ar",
+        "PII_ENABLE_TIER2_ARABIC_NER": "false",
+        "PII_ENABLE_TIER3_GLINER": "false",
+        "PII_TIER2_MODEL_DIR": "/models/arabic-ner",
+        "PII_DETECTION_CACHE_SIZE": "2048",
+        "PII_CONFIG_DIR": "/app/config",
+        "PII_AUDIT_WAL_PATH": "/var/lib/pii-service/wal",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    settings = Settings()
+    assert settings.languages == ("en", "ar")
+    assert settings.detection_cache_size == 2048
+    assert settings.enable_tier2_arabic_ner is False
+    assert str(settings.config_dir) == "/app/config"

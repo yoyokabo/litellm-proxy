@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Annotated, Final, Literal, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 __all__ = ["EXAMPLE_PEPPER", "MIN_PEPPER_LENGTH", "Settings", "get_settings"]
 
@@ -72,7 +72,12 @@ class Settings(BaseSettings):
     audit_wal_enabled: bool = True
 
     # -- detection ---------------------------------------------------------
-    languages: tuple[str, ...] = ("en", "ar")
+    # NoDecode is required, not stylistic. Without it pydantic-settings tries
+    # to JSON-decode any complex-typed value coming from the environment, so
+    # PII_LANGUAGES=en,ar raises SettingsError before the validator below ever
+    # runs -- a crash that appears only once the variable is actually set,
+    # which in practice means only inside the container.
+    languages: Annotated[tuple[str, ...], NoDecode] = ("en", "ar")
     enable_tier2_arabic_ner: bool = False
     enable_tier3_gliner: bool = False
     tier2_model_dir: Path | None = None

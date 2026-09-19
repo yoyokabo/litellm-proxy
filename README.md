@@ -98,12 +98,25 @@ on — usually `<compose-project>_default`. Find it with `docker network ls`.
 ### 3. Bring it up
 
 ```bash
-docker compose up -d
+docker compose up -d --wait
 ```
 
 This starts `pii-db` (Postgres 16, **separate** from LiteLLM's), runs the
 Alembic migration, and starts `pii-service` on the `litellm` network so the
 guardrail can reach it at `http://pii-service:8090`.
+
+Building behind an internal PyPI mirror or a TLS-intercepting proxy — the
+normal case at the sites this ships to:
+
+```bash
+PIP_CA_BUNDLE=/etc/ssl/certs/corporate-ca.pem docker compose build
+docker compose build --build-arg PIP_INDEX_URL=https://nexus.internal/repository/pypi/simple
+```
+
+Both are optional and change nothing on an ordinary network. The build needs a
+PyPI mirror and **no container registry beyond the two base images** and no
+Debian archive: there is no `apt` step, and the healthcheck uses the Python
+already in the image rather than pulling in `curl`.
 
 ```bash
 curl -s localhost:8090/livez        # if you uncommented the port mapping
