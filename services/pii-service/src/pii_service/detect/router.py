@@ -22,9 +22,8 @@ from dataclasses import dataclass, field
 from typing import Final
 
 from presidio_analyzer import AnalyzerEngine, RecognizerResult
-from presidio_anonymizer import AnonymizerEngine
-from presidio_anonymizer.entities import OperatorConfig
 
+from pii_service.detect.mask import splice
 from pii_service.detect.normalize import DIGITS, map_span_to_original, normalize
 from pii_service.detect.tier1_patterns import CONTEXT_TERM_KEY
 from pii_service.policy.loader import PolicyBundle
@@ -203,7 +202,6 @@ class PiiRouter:
     def __init__(self, analyzer: AnalyzerEngine, policy: PolicyBundle) -> None:
         self._analyzer: Final = analyzer
         self._policy: Final = policy
-        self._anonymizer: Final = AnonymizerEngine()
 
     def analyze(self, text: str, *, language: str | None = None) -> AnalysisOutcome:
         """Detect, apply policy and produce the masked text."""
@@ -298,31 +296,14 @@ class PiiRouter:
 
     def _anonymize(self, text: str, spans: Sequence[DetectedSpan]) -> str:
         """Splice placeholders over MASK spans, leaving ALLOW spans intact."""
-        maskable = [s for s in spans if s.action is EntityAction.MASK]
-        if not maskable:
-            return text
-
-        operators = {
-            span.entity_type: OperatorConfig(
-                "replace",
-                {"new_value": self._placeholder(span.entity_type)},
-            )
-            for span in maskable
-        }
-        result = self._anonymizer.anonymize(
-            text=text,
-            analyzer_results=[
-                RecognizerResult(
-                    entity_type=span.entity_type,
-                    start=span.start,
-                    end=span.end,
-                    score=span.score,
-                )
-                for span in maskable
+        return splice(
+            text,
+            [
+                (span.start, span.end, self._placeholder(span.entity_type))
+                for span in spans
+                if span.action is EntityAction.MASK
             ],
-            operators=operators,
         )
-        return str(result.text)
 
     def _placeholder(self, entity_type: str) -> str:
         policy = self._policy.policy_for(entity_type)

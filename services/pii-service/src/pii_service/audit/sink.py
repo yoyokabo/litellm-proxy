@@ -39,6 +39,20 @@ __all__ = ["AuditSink", "AuditStats"]
 logger: Final = structlog.get_logger(__name__)
 
 
+def _pool_options(database_url: str) -> dict[str, object]:
+    """Connection-pool settings appropriate to the backend.
+
+    SQLite gets none: SQLAlchemy selects ``StaticPool`` for an in-memory
+    database and ``SingletonThreadPool`` for a file, and neither accepts
+    ``pool_size`` -- passing them raises at engine construction rather than
+    being ignored. Postgres is the deployment target; SQLite only ever appears
+    in development and tests.
+    """
+    if database_url.startswith("sqlite"):
+        return {}
+    return {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 5}
+
+
 @dataclass
 class AuditStats:
     """Counters worth exporting. `spilled` and `dropped` are the alarm signals."""
@@ -74,9 +88,7 @@ class AuditSink:
         self._settings: Final = settings
         self._engine: Final = engine or create_async_engine(
             settings.database_url,
-            pool_pre_ping=True,
-            pool_size=5,
-            max_overflow=5,
+            **_pool_options(settings.database_url),
         )
         self._session_factory: Final = async_sessionmaker(self._engine, expire_on_commit=False)
         self._wal: Final = wal or AuditWal(settings.audit_wal_path)

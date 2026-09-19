@@ -1,10 +1,10 @@
 """The audit record and its construction.
 
-``AuditRecord.from_span`` is the single place in the system where a matched
-value is read for storage, and it converts that value into exactly two things:
-a pepper-keyed fingerprint and a policy-governed preview. The value itself is
-not a field on the record, so no later code path -- serializer, logger,
-retry-handler -- can write it out by accident.
+A record is built from a ``PreparedSpan``, which by construction has no matched
+value -- the fingerprint and preview were computed in
+``PreparedSpan.from_detected`` and the value discarded there. So this module
+never sees a value and cannot write one out, whatever a future serializer,
+logger or retry handler does.
 """
 
 from __future__ import annotations
@@ -14,9 +14,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Self
 
-from pii_service.audit.fingerprint import fingerprint
-from pii_service.detect.router import DetectedSpan
-from pii_service.policy.loader import PolicyBundle
+from pii_service.spans import PreparedSpan
 
 __all__ = ["AuditRecord", "RequestContext"]
 
@@ -69,22 +67,20 @@ class AuditRecord:
     latency_ms: int | None = None
 
     @classmethod
-    def from_span(
+    def from_prepared(
         cls,
-        span: DetectedSpan,
+        span: PreparedSpan,
         context: RequestContext,
-        policy: PolicyBundle,
-        pepper: bytes,
         *,
         latency_ms: int | None = None,
         ts: datetime | None = None,
     ) -> Self:
-        """Build a record from a span. The span's value ends here."""
+        """Build a row from a value-free span plus this request's identity."""
         return cls(
             request_id=context.request_id,
             entity_type=span.entity_type,
             recognizer=span.recognizer,
-            action=str(span.action),
+            action=span.action,
             ts=ts or datetime.now(UTC),
             user_id=context.user_id,
             team_id=context.team_id,
@@ -98,8 +94,8 @@ class AuditRecord:
             message_index=context.message_index,
             message_role=context.message_role,
             field=context.field_name,
-            value_fp=fingerprint(span.entity_type, span.value, pepper),
-            preview=policy.render_preview(span.entity_type, span.value),
+            value_fp=span.value_fp,
+            preview=span.preview,
             model=context.model,
             lang=span.lang,
             latency_ms=latency_ms,

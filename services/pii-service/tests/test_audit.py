@@ -26,6 +26,7 @@ from pii_service.db.models import Base, PiiEvent
 from pii_service.detect.router import DetectedSpan
 from pii_service.policy.models import EntityAction, EntityCategory
 from pii_service.settings import EXAMPLE_PEPPER, Settings
+from pii_service.spans import PreparedSpan
 from pii_service.synthetic import (
     synthetic_mobile,
     synthetic_national_id,
@@ -131,10 +132,18 @@ def _span(entity_type: str = "EG_NATIONAL_ID", value: str = "28503122148219") ->
     )
 
 
-def test_record_has_no_value_field(policy: object) -> None:
-    record = AuditRecord.from_span(
-        _span(), RequestContext(request_id="r1"), policy, PEPPER  # type: ignore[arg-type]
+def _prepared(
+    policy: object,
+    entity_type: str = "EG_NATIONAL_ID",
+    value: str = "28503122148219",
+) -> PreparedSpan:
+    return PreparedSpan.from_detected(
+        _span(entity_type, value), text_index=0, policy=policy, pepper=PEPPER  # type: ignore[arg-type]
     )
+
+
+def test_record_has_no_value_field(policy: object) -> None:
+    record = AuditRecord.from_prepared(_prepared(policy), RequestContext(request_id="r1"))
     row = record.to_row()
 
     assert "value" not in row
@@ -142,8 +151,8 @@ def test_record_has_no_value_field(policy: object) -> None:
 
 
 def test_record_carries_fingerprint_preview_and_length(policy: object) -> None:
-    record = AuditRecord.from_span(
-        _span(), RequestContext(request_id="r1", user_id="u1"), policy, PEPPER  # type: ignore[arg-type]
+    record = AuditRecord.from_prepared(
+        _prepared(policy), RequestContext(request_id="r1", user_id="u1")
     )
 
     assert record.value_fp == fingerprint("EG_NATIONAL_ID", "28503122148219", PEPPER)
@@ -153,22 +162,17 @@ def test_record_carries_fingerprint_preview_and_length(policy: object) -> None:
 
 
 def test_person_record_has_no_preview(policy: object) -> None:
-    record = AuditRecord.from_span(
-        _span("AR_PERSON", "محمد علي"),
-        RequestContext(request_id="r1"),
-        policy,  # type: ignore[arg-type]
-        PEPPER,
+    record = AuditRecord.from_prepared(
+        _prepared(policy, "AR_PERSON", "محمد علي"), RequestContext(request_id="r1")
     )
     assert record.preview is None
     assert record.value_fp is not None  # still correlatable
 
 
 def test_record_round_trips_through_json(policy: object) -> None:
-    original = AuditRecord.from_span(
-        _span(),
+    original = AuditRecord.from_prepared(
+        _prepared(policy),
         RequestContext(request_id="r1", user_id="u1", model="qwen3"),
-        policy,  # type: ignore[arg-type]
-        PEPPER,
         latency_ms=12,
     )
     restored = AuditRecord.from_json(original.to_json())
@@ -182,9 +186,7 @@ def test_record_round_trips_through_json(policy: object) -> None:
 
 def _records(count: int, policy: object) -> list[AuditRecord]:
     return [
-        AuditRecord.from_span(
-            _span(), RequestContext(request_id=f"r{i}"), policy, PEPPER  # type: ignore[arg-type]
-        )
+        AuditRecord.from_prepared(_prepared(policy), RequestContext(request_id=f"r{i}"))
         for i in range(count)
     ]
 
@@ -233,8 +235,8 @@ def test_wal_contains_no_pii(tmp_path: Path, policy: object) -> None:
     wal = AuditWal(tmp_path)
     wal.append(
         [
-            AuditRecord.from_span(
-                _span(value=nid), RequestContext(request_id="r"), policy, PEPPER  # type: ignore[arg-type]
+            AuditRecord.from_prepared(
+                _prepared(policy, value=nid), RequestContext(request_id="r")
             )
         ]
     )
@@ -417,8 +419,6 @@ def test_break_glass_reveal_is_off_in_phase_one() -> None:
 
 
 def test_record_timestamp_is_timezone_aware(policy: object) -> None:
-    record = AuditRecord.from_span(
-        _span(), RequestContext(request_id="r"), policy, PEPPER  # type: ignore[arg-type]
-    )
+    record = AuditRecord.from_prepared(_prepared(policy), RequestContext(request_id="r"))
     assert record.ts.tzinfo is not None
     assert record.ts.astimezone(UTC) <= datetime.now(UTC)
