@@ -1,0 +1,164 @@
+# Egyptian address gazetteer.
+#
+# Arabic addresses are not a job for the NER model (brief §4). They are highly
+# structural -- a marker word, a name, a number, a governorate -- and a
+# gazetteer plus pattern gets far better recall than a PER/LOC tagger, is
+# auditable, and is extended by editing this file rather than retraining.
+#
+# All terms are matched against GAZETTEER-normalized text (alef variants folded
+# to bare alef, ta marbuta to heh, alef maqsura to yeh, diacritics and tatweel
+# stripped), so write them in whatever orthography is natural -- the loader
+# normalizes both sides. Variants are listed only where they differ after
+# folding.
+
+version: 1
+
+# The 27 governorates. `code` cross-references the national ID governorate
+# digits, so a detected governorate name near a 14-digit number is corroborating
+# context rather than a coincidence.
+governorates:
+  - { code: "01", ar: "القاهرة", en: "Cairo" }
+  - { code: "02", ar: "الإسكندرية", en: "Alexandria" }
+  - { code: "03", ar: "بورسعيد", en: "Port Said" }
+  - { code: "04", ar: "السويس", en: "Suez" }
+  - { code: "11", ar: "دمياط", en: "Damietta" }
+  - { code: "12", ar: "الدقهلية", en: "Dakahlia" }
+  - { code: "13", ar: "الشرقية", en: "Sharqia" }
+  - { code: "14", ar: "القليوبية", en: "Qalyubia" }
+  - { code: "15", ar: "كفر الشيخ", en: "Kafr El Sheikh" }
+  - { code: "16", ar: "الغربية", en: "Gharbia" }
+  - { code: "17", ar: "المنوفية", en: "Monufia" }
+  - { code: "18", ar: "البحيرة", en: "Beheira" }
+  - { code: "19", ar: "الإسماعيلية", en: "Ismailia" }
+  - { code: "21", ar: "الجيزة", en: "Giza" }
+  - { code: "22", ar: "بني سويف", en: "Beni Suef" }
+  - { code: "23", ar: "الفيوم", en: "Fayoum" }
+  - { code: "24", ar: "المنيا", en: "Minya" }
+  - { code: "25", ar: "أسيوط", en: "Asyut" }
+  - { code: "26", ar: "سوهاج", en: "Sohag" }
+  - { code: "27", ar: "قنا", en: "Qena" }
+  - { code: "28", ar: "أسوان", en: "Aswan" }
+  - { code: "29", ar: "الأقصر", en: "Luxor" }
+  - { code: "31", ar: "البحر الأحمر", en: "Red Sea" }
+  - { code: "32", ar: "الوادي الجديد", en: "New Valley" }
+  - { code: "33", ar: "مطروح", en: "Matrouh" }
+  - { code: "34", ar: "شمال سيناء", en: "North Sinai" }
+  - { code: "35", ar: "جنوب سيناء", en: "South Sinai" }
+
+# Words that open an address component. A match needs at least one of these --
+# a governorate name on its own is a place, not an address.
+structural_markers:
+  street:
+    - "شارع"
+    - "ش"        # the near-universal abbreviation for شارع
+    - "طريق"
+    - "كورنيش"
+  building:
+    - "عمارة"
+    - "برج"
+    - "مبنى"
+    - "بلوك"
+    - "عقار"
+  unit:
+    - "شقة"
+    - "الدور"
+    - "دور"
+    - "وحدة"
+    - "مكتب"
+  area:
+    - "مدينة"
+    - "حي"
+    - "منطقة"
+    - "مجاورة"
+    - "ميدان"
+    - "قرية"
+    - "مركز"
+    - "قسم"
+    - "محافظة"
+    - "تقسيم"
+  postal:
+    - "ص.ب"
+    - "صندوق بريد"
+    - "الرمز البريدي"
+
+# Well-known districts and new cities. Not exhaustive by design -- these raise
+# confidence when they appear near a marker; they are not required.
+localities:
+  - "المعادي"
+  - "مدينة نصر"
+  - "مصر الجديدة"
+  - "الزمالك"
+  - "المهندسين"
+  - "الدقي"
+  - "الهرم"
+  - "فيصل"
+  - "شبرا"
+  - "حلوان"
+  - "العبور"
+  - "الشروق"
+  - "الرحاب"
+  - "التجمع الخامس"
+  - "الشيخ زايد"
+  - "أكتوبر"
+  - "السادس من أكتوبر"
+  - "العاشر من رمضان"
+  - "برج العرب"
+  - "سموحة"
+  - "المنتزه"
+  - "العجمي"
+  - "الساحل الشمالي"
+  - "الغردقة"
+  - "شرم الشيخ"
+  - "دهب"
+  - "العلمين"
+
+# Context terms that boost any tier-1 or tier-2 finding sitting near them.
+# These are what Presidio's context mechanism consumes (brief §4).
+context_terms:
+  national_id:
+    - "الرقم القومي"
+    - "رقم قومي"
+    - "الرقم القومى"
+    - "بطاقة"
+    - "البطاقة"
+    - "رقم البطاقة"
+    - "national id"
+    - "nid"
+  mobile:
+    - "موبايل"
+    - "محمول"
+    - "تليفون"
+    - "هاتف"
+    - "رقم الموبايل"
+    - "mobile"
+    - "phone"
+  address:
+    - "عنوان"
+    - "العنوان"
+    - "السكن"
+    - "محل الإقامة"
+    - "address"
+  passport:
+    - "جواز"
+    - "جواز سفر"
+    - "رقم الجواز"
+    - "passport"
+  tax:
+    - "بطاقة ضريبية"
+    - "الرقم الضريبي"
+    - "تسجيل ضريبي"
+    - "tax id"
+    - "tax registration"
+  bank:
+    - "حساب"
+    - "رقم الحساب"
+    - "الحساب البنكي"
+    - "ايبان"
+    - "iban"
+    - "account"
+  person:
+    - "الاسم"
+    - "اسم"
+    - "المريض"
+    - "العميل"
+    - "الموظف"

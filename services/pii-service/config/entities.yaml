@@ -1,0 +1,137 @@
+# Entity policy: what we detect, how confident we must be, and what we do.
+#
+# This file is policy, not code (brief §6). Compliance changes an action or a
+# threshold here and restarts the service; nobody ships a release for it.
+#
+# action:
+#   MASK  -- replace the span with the placeholder and let the request through
+#   BLOCK -- refuse the request; the caller gets entity types and counts only
+#   ALLOW -- record the finding in the audit trail, change nothing
+#
+# category drives the admin UI colour scale (brief §9) and is deliberately
+# separate from the status colours, so a stacked timeline never reads as
+# "lots of red = bad".
+#
+# tier is informational: which detector is expected to produce the entity.
+
+version: 1
+
+defaults:
+  action: MASK
+  score_threshold: 0.5
+  category: other
+
+entities:
+  # --- Tier 1: deterministic --------------------------------------------
+  EG_NATIONAL_ID:
+    category: id
+    tier: 1
+    action: MASK
+    # 0.85 is the unverified-checksum score, so this threshold keeps those.
+    score_threshold: 0.8
+    placeholder: "<EG_NATIONAL_ID>"
+
+  EG_PASSPORT:
+    category: id
+    tier: 1
+    action: MASK
+    # Shape alone is weak (a letter plus digits); context words carry it over
+    # the line. Dropping this threshold without a context term will flood the
+    # audit log with order numbers.
+    score_threshold: 0.6
+    placeholder: "<EG_PASSPORT>"
+
+  EG_TAX_ID:
+    category: id
+    tier: 1
+    action: MASK
+    score_threshold: 0.6
+    placeholder: "<EG_TAX_ID>"
+
+  EG_MOBILE:
+    category: contact
+    tier: 1
+    action: MASK
+    score_threshold: 0.6
+    placeholder: "<EG_MOBILE>"
+
+  EG_IBAN:
+    category: finance
+    tier: 1
+    action: MASK
+    score_threshold: 0.7
+    placeholder: "<EG_IBAN>"
+
+  EMAIL_ADDRESS:
+    category: contact
+    tier: 1
+    action: MASK
+    score_threshold: 0.5
+    placeholder: "<EMAIL>"
+
+  CREDIT_CARD:
+    category: finance
+    tier: 1
+    action: MASK
+    score_threshold: 0.6
+    placeholder: "<CREDIT_CARD>"
+
+  IBAN_CODE:
+    category: finance
+    tier: 1
+    action: MASK
+    score_threshold: 0.7
+    placeholder: "<IBAN>"
+
+  # --- Tier 2: Arabic NER + gazetteer -----------------------------------
+  AR_PERSON:
+    category: person
+    tier: 2
+    action: MASK
+    score_threshold: 0.6
+    placeholder: "<AR_PERSON>"
+
+  AR_LOCATION:
+    category: location
+    tier: 2
+    action: MASK
+    score_threshold: 0.6
+    placeholder: "<AR_LOCATION>"
+
+  AR_ORG:
+    category: other
+    tier: 2
+    # An organisation name is rarely personal data on its own, and masking it
+    # mangles the prompts engineers actually send. Recorded, not masked.
+    action: ALLOW
+    score_threshold: 0.6
+    placeholder: "<AR_ORG>"
+
+  EG_ADDRESS:
+    category: location
+    tier: 2
+    action: MASK
+    score_threshold: 0.55
+    placeholder: "<EG_ADDRESS>"
+
+  # --- Tier 3: GLiNER2, Latin script only -------------------------------
+  PERSON:
+    category: person
+    tier: 3
+    action: MASK
+    score_threshold: 0.7
+    placeholder: "<PERSON>"
+
+  LOCATION:
+    category: location
+    tier: 3
+    action: MASK
+    score_threshold: 0.7
+    placeholder: "<LOCATION>"
+
+  ORGANIZATION:
+    category: other
+    tier: 3
+    action: ALLOW
+    score_threshold: 0.7
+    placeholder: "<ORGANIZATION>"

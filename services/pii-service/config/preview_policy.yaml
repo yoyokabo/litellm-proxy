@@ -1,0 +1,93 @@
+# Preview policy: how much of a matched value, if any, may be written to the
+# audit database (brief §6).
+#
+# The audit DB must never become a searchable PII store -- that is a worse asset
+# to lose than the original leak. So the default is `none`, and every exception
+# is listed explicitly below with a reason.
+#
+# strategies:
+#   none        -- preview column is NULL. The correct answer for anything a
+#                  human reads as an identity: names, addresses, free text.
+#   first_last  -- keep `first` leading and `last` trailing characters, mask the
+#                  middle. Only for fixed-length structured identifiers, where
+#                  the retained characters are not enough to reconstruct the
+#                  value but are enough for an auditor to recognise a repeat.
+#   last        -- keep only `last` trailing characters.
+#
+# There is deliberately no "length only" strategy: the `value_len` column
+# already carries the length, and a second way to say the same thing is a
+# second thing to keep consistent.
+#
+# Reconstruction budget: `first + last` must stay well under the value's length.
+# For a 14-digit national ID, first-4/last-4 leaves 6 unknown digits -- and the
+# birth date those leading digits encode is already low-entropy, which is why
+# this is paired with the HMAC fingerprint rather than relied on alone.
+
+version: 1
+
+default:
+  strategy: none
+
+rules:
+  EG_NATIONAL_ID:
+    strategy: first_last
+    first: 4
+    last: 4
+    mask_char: "*"
+    # 2850******5974 -- century+YY visible, governorate and serial hidden.
+
+  EG_MOBILE:
+    strategy: first_last
+    first: 3
+    last: 2
+    mask_char: "*"
+    # 010******67 -- operator prefix stays legible for triage.
+
+  EG_IBAN:
+    strategy: first_last
+    first: 4
+    last: 4
+    mask_char: "*"
+
+  IBAN_CODE:
+    strategy: first_last
+    first: 4
+    last: 4
+    mask_char: "*"
+
+  CREDIT_CARD:
+    strategy: last
+    last: 4
+    mask_char: "*"
+    # Last four only, matching what a payment receipt is permitted to show.
+
+  EG_TAX_ID:
+    strategy: first_last
+    first: 2
+    last: 2
+    mask_char: "*"
+
+  EG_PASSPORT:
+    strategy: first_last
+    first: 1
+    last: 2
+    mask_char: "*"
+
+  # Everything below is a person, a place, or free text. No preview, ever --
+  # a "partial" name is still a name.
+  EMAIL_ADDRESS:
+    strategy: none
+  AR_PERSON:
+    strategy: none
+  AR_LOCATION:
+    strategy: none
+  AR_ORG:
+    strategy: none
+  EG_ADDRESS:
+    strategy: none
+  PERSON:
+    strategy: none
+  LOCATION:
+    strategy: none
+  ORGANIZATION:
+    strategy: none
