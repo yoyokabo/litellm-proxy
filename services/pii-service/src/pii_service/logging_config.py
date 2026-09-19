@@ -110,6 +110,17 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
         wrapper_class=structlog.make_filtering_bound_logger(
             getattr(logging, level.upper(), logging.INFO)
         ),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        # Route through the stdlib logger rather than structlog.PrintLogger.
+        #
+        # PrintLoggerFactory binds a stream *at configuration time*, and with
+        # cache_logger_on_first_use that stream is held forever by every bound
+        # logger. If the stream is later closed -- which is exactly what pytest
+        # does to captured stdout between tests -- every subsequent log call
+        # raises "I/O operation on closed file" from somewhere unrelated.
+        #
+        # The stdlib logger resolves its handler at emit time, so it survives
+        # that, and it means uvicorn's logging and ours are one pipeline rather
+        # than two writing to the same fd.
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )

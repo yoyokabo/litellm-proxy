@@ -47,6 +47,10 @@ dev = [
     "aiosqlite>=0.20",
     # A hung test must fail, not silently consume the whole CI run.
     "pytest-timeout>=2.3",
+    # Builds the deterministic stand-in token classifier in
+    # tests/fake_ner_model.py, so tier 2's real ONNX path is covered without
+    # downloading a checkpoint. Pair with the 'ner' extra: pip install -e ".[dev,ner]"
+    "onnx>=1.16",
     "ruff>=0.8",
     "mypy>=1.13",
     "types-PyYAML",

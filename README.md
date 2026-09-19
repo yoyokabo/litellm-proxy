@@ -163,12 +163,74 @@ Tier 2 needs a directory containing `model.onnx`, `tokenizer.json` and
 `labels.json`, pointed at by `PII_TIER2_MODEL_DIR`. Enabling tier 2 without one
 raises at startup rather than silently running with reduced coverage.
 
-> **Open decision.** *Which CAMeLBERT variant to quantize has not been decided.*
-> The brief names this as one of the things to flag rather than guess, because
-> the choice materially changes Arabic name recall. `bert-base-arabic-camelbert-mix-ner`
-> is the usual default; a dialect-specific variant may do better on Egyptian
-> text. Decide, export to ONNX int8 in a builder stage, and record the choice
-> here.
+#### Choosing the CAMeLBERT variant
+
+**Open decision — decide it by running the comparison, not by reading a
+benchmark.** CAMeL-Lab publishes two NER checkpoints:
+
+| Variant | Pre-training | Why it might win |
+|---|---|---|
+| `bert-base-arabic-camelbert-mix-ner` | MSA + dialectal + classical | Prompts from this gateway are Egyptian dialect, not newswire |
+| `bert-base-arabic-camelbert-msa-ner` | MSA only | Usually stronger on formal register, which some traffic is |
+
+The choice materially changes Arabic name recall, and a missed name is a leak,
+so it is settled by measurement:
+
+```bash
+# Build-time only, on a machine with internet. Needs torch; the runtime image
+# never does.
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install transformers "optimum[onnxruntime]"
+
+python scripts/export_camelbert_onnx.py --all      # both variants, fp32 + int8
+python scripts/eval_arabic_ner.py --all --json ner-verdict.json
+```
+
+That prints a ranked table and a verdict naming the directory to put in
+`PII_TIER2_MODEL_DIR`. Exporting **both precisions** is deliberate: dynamic
+int8 usually costs little accuracy, but "usually" is not a measurement, and
+here a point of coverage is a leak rather than a rounding error.
+
+**How it ranks.** Primary metric is **coverage** — the share of gold spans
+overlapped by *any* prediction — per brief §5, not exact-match F1. A sloppy
+boundary that still covers the name is a pass; a missed span is a leak. Type
+confusion does not count against coverage either, because a PER predicted as
+LOC is still masked.
+
+Coverage alone would rate a model that masks everything as perfect, so there is
+a gate: **coverage ≥ 80%** and **≤ 0.10 false positives per entity-free
+sentence**. A variant failing either cannot win, whatever its other numbers.
+Ties break on false positives, then p95 latency.
+
+The report also breaks coverage down **by register**, with Egyptian first.
+That column is the one that matters: a variant that wins on the MSA average
+while missing dialect names is the wrong choice for this deployment, and a
+single headline number would hide exactly that.
+
+**The gold set** is [`services/pii-service/eval/arabic_ner_gold.yaml`](services/pii-service/eval/arabic_ner_gold.yaml)
+— 62 sentences, 91 spans, weighted towards Egyptian dialect and mixed
+Arabic/Latin technical text, with 12 entity-free sentences carrying the
+false-positive measurement and hard cases where a name collides with an
+ordinary word (`نور` the name vs `نور` the noun). Entities are authored as
+inline `[surface](TYPE)` markup and offsets are derived from it — nobody
+hand-counts a character offset in Arabic, which is the same discipline the
+detector itself is built on.
+
+Extend it. It is the input to phase 5's eval loop, and the false-positive flags
+from the admin UI are meant to flow back into it.
+
+> **Not yet run here.** This sandbox has no route to HuggingFace (and pulling
+> CAMeLBERT from an unofficial mirror into a PII detector is a supply-chain
+> risk not worth taking), so the two variants have not been measured. The
+> harness itself is tested and CI exercises it end to end against deterministic
+> stand-in ONNX models. Record the result below when you run it.
+>
+> | Variant | Coverage | Egyptian | FP/clean | p95 | Chosen |
+> |---|---|---|---|---|---|
+> | camelbert-mix-int8 | — | — | — | — | |
+> | camelbert-msa-int8 | — | — | — | — | |
+> | camelbert-mix-fp32 | — | — | — | — | |
+> | camelbert-msa-fp32 | — | — | — | — | |
 
 ### Tier 3 latency
 

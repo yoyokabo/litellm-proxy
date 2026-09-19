@@ -19,7 +19,6 @@ from __future__ import annotations
 import logging
 import random
 from datetime import date
-from pathlib import Path
 
 import pytest
 import structlog
@@ -181,22 +180,27 @@ def test_redacting_processor_truncates_exception_messages() -> None:
 
 
 def test_service_log_line_carries_counts_not_text(
-    tmp_path: Path, known_pii: dict[str, str], capsys: pytest.CaptureFixture[str]
+    known_pii: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The /analyze log line must be counts and status only."""
     configure_logging("INFO")
     logger = structlog.get_logger("probe")
 
-    logger.info(
-        "analyze",
-        request_id="r",
-        entity_counts={"EG_NATIONAL_ID": 1},
-        blocked=False,
-        latency_ms=4,
-        # A careless caller adding the text must not defeat the guarantee.
-        text=f"id {known_pii['nid']}",
-    )
+    with caplog.at_level(logging.INFO):
+        logger.info(
+            "analyze",
+            request_id="r",
+            entity_counts={"EG_NATIONAL_ID": 1},
+            blocked=False,
+            latency_ms=4,
+            # A careless caller adding the text must not defeat the guarantee.
+            text=f"id {known_pii['nid']}",
+        )
 
-    out = capsys.readouterr().out
-    assert known_pii["nid"] not in out
-    assert "EG_NATIONAL_ID" in out
+    # structlog routes through the stdlib logger, so the line lands in caplog;
+    # stdout is checked too so the assertion holds under either configuration.
+    emitted = caplog.text + capsys.readouterr().out
+    assert known_pii["nid"] not in emitted
+    assert "EG_NATIONAL_ID" in emitted

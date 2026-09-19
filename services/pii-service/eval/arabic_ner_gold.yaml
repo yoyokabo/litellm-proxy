@@ -1,0 +1,303 @@
+# Arabic NER gold set — for choosing between the CAMeLBERT NER variants.
+#
+# Entities are marked inline as [surface](TYPE) and parsed into character
+# offsets by pii_service.evaluation.gold. Do not write offsets by hand.
+#
+# Types: PER (person), LOC (location/place), ORG (organisation).
+#
+# Registers:
+#   msa           formal Modern Standard Arabic — what msa-ner is trained on
+#   egyptian      Egyptian dialect — what engineers on this gateway actually type
+#   mixed_script  Arabic entities inside Latin/technical text, the common
+#                 shape of a real prompt (a code comment, a log line, a JSON blob)
+#
+# The set is deliberately weighted towards `egyptian` and `mixed_script`. The
+# question is not which variant scores better on a benchmark, it is which one
+# misses less PII in this deployment's traffic.
+#
+# Negative cases (no entities) carry the false-positive measurement. They are
+# not padding: a recognizer that masks اليوم or الشركة makes the gateway
+# unusable, and a coverage-only score would rate it perfect.
+#
+# Names are composed from common Arabic given names and surnames. No real
+# individual's details appear here.
+
+version: 1
+
+cases:
+  # ------------------------------------------------------------------
+  # Modern Standard Arabic
+  # ------------------------------------------------------------------
+  - id: msa-001
+    register: msa
+    text: "اجتمع [محمد علي](PER) مع مسؤولي [وزارة الصحة](ORG) في [القاهرة](LOC) أمس."
+
+  - id: msa-002
+    register: msa
+    text: "أعلنت [شركة النيل للتجارة](ORG) تعيين [أحمد عبد الرحمن](PER) مديرا للفرع."
+
+  - id: msa-003
+    register: msa
+    text: "يقيم [يوسف إبراهيم](PER) في مدينة [الإسكندرية](LOC) منذ عشر سنوات."
+
+  - id: msa-004
+    register: msa
+    text: "وقعت [الهيئة العامة للاستثمار](ORG) اتفاقية مع [بنك مصر](ORG) الأسبوع الماضي."
+
+  - id: msa-005
+    register: msa
+    text: "انتقل [خالد منصور](PER) من [أسيوط](LOC) إلى [الجيزة](LOC) لاستكمال دراسته."
+
+  - id: msa-006
+    register: msa
+    text: "صرحت الدكتورة [فاطمة السيد](PER) بأن التقرير سيصدر قريبا."
+    note: "honorific before the name; the title itself is not part of the span"
+
+  - id: msa-007
+    register: msa
+    text: "تأسست [جامعة القاهرة](ORG) في مطلع القرن الماضي."
+    note: "ORG containing a LOC token — a classic mislabel"
+
+  - id: msa-008
+    register: msa
+    text: "زار وفد من [وزارة الداخلية](ORG) محافظة [أسوان](LOC) لمتابعة المشروع."
+
+  - id: msa-009
+    register: msa
+    text: "قدم [مصطفى كامل](PER) استقالته إلى [الشركة القابضة للكهرباء](ORG)."
+
+  - id: msa-010
+    register: msa
+    text: "تقع [شرم الشيخ](LOC) على ساحل [البحر الأحمر](LOC)."
+
+  - id: msa-011
+    register: msa
+    text: "ناقش [عمرو حسن](PER) و[سارة عبد الله](PER) تفاصيل العقد."
+    note: "two adjacent PER spans separated only by a conjunction"
+
+  - id: msa-012
+    register: msa
+    text: "أصدرت [الجهاز المركزي للتعبئة العامة والإحصاء](ORG) تقريرها السنوي."
+    note: "long multi-token ORG — boundary quality"
+
+  # ------------------------------------------------------------------
+  # Egyptian dialect — the register that decides this
+  # ------------------------------------------------------------------
+  - id: egy-001
+    register: egyptian
+    text: "[محمد](PER) بيشتغل في [المعادي](LOC) دلوقتي."
+
+  - id: egy-002
+    register: egyptian
+    text: "أنا عايز أكلم [أحمد](PER) بتاع [شركة الأهرام](ORG) ضروري."
+
+  - id: egy-003
+    register: egyptian
+    text: "[منى](PER) ساكنة في [مدينة نصر](LOC) من زمان."
+
+  - id: egy-004
+    register: egyptian
+    text: "ازيك يا [كريم](PER)، إحنا هنتقابل في [وسط البلد](LOC) بكرة."
+
+  - id: egy-005
+    register: egyptian
+    text: "الراجل ده اسمه [حسام الدين](PER) وشغال في [بنك القاهرة](ORG)."
+
+  - id: egy-006
+    register: egyptian
+    text: "مش لاقي رقم [ياسمين](PER) اللي من [طنطا](LOC)."
+
+  - id: egy-007
+    register: egyptian
+    text: "[عم سيد](PER) هيوصل الأوردر لحد [الهرم](LOC) كده."
+    note: "kinship honorific fused into common address form"
+
+  - id: egy-008
+    register: egyptian
+    text: "كلمت [شركة أوراسكوم](ORG) وقالولي إن [طارق](PER) هو المسؤول."
+
+  - id: egy-009
+    register: egyptian
+    text: "إحنا رايحين [الساحل الشمالي](LOC) الصيف ده مع [نادر](PER) وعيلته."
+
+  - id: egy-010
+    register: egyptian
+    text: "[أبو أحمد](PER) بيبيع في السوق بتاع [شبرا](LOC)."
+
+  - id: egy-011
+    register: egyptian
+    text: "قوللي بقى، [سمير](PER) ده شغال في [المستشفى الجوي](ORG) ولا لأ؟"
+
+  - id: egy-012
+    register: egyptian
+    text: "روحنا [الغردقة](LOC) وقابلنا [عمرو](PER) هناك بالصدفة."
+
+  - id: egy-013
+    register: egyptian
+    text: "الأستاذ [جمال](PER) قالي إن الميعاد اتأجل لبعد بكرة."
+
+  - id: egy-014
+    register: egyptian
+    text: "[سلمى](PER) خلصت الشغل بتاعها في [الشيخ زايد](LOC) وراجعة."
+
+  - id: egy-015
+    register: egyptian
+    text: "محتاج حد يوصل الورق ده لـ[مكتب المحاماة](ORG) في [الدقي](LOC)."
+
+  - id: egy-016
+    register: egyptian
+    text: "[هدى](PER) و[نورا](PER) اتخرجوا من [كلية الهندسة](ORG) السنة اللي فاتت."
+
+  - id: egy-017
+    register: egyptian
+    text: "أنا بكلمك من [العاشر من رمضان](LOC)، المصنع هنا."
+    note: "LOC that looks like a date"
+
+  - id: egy-018
+    register: egyptian
+    text: "[مدحت](PER) مش رد على التليفون من امبارح."
+
+  - id: egy-019
+    register: egyptian
+    text: "خد العنوان من [وليد](PER) وابعته على [واتساب](ORG)."
+
+  - id: egy-020
+    register: egyptian
+    text: "الشحنة وصلت [بورسعيد](LOC) بس [إيهاب](PER) لسه ما استلمهاش."
+
+  # ------------------------------------------------------------------
+  # Arabic entities inside Latin / technical context
+  # ------------------------------------------------------------------
+  - id: mix-001
+    register: mixed_script
+    text: "Please summarise this record: customer [محمد عبد العزيز](PER), branch [المعادي](LOC)."
+
+  - id: mix-002
+    register: mixed_script
+    text: "TODO: ask [سارة](PER) from [قسم المبيعات](ORG) about the Q3 numbers."
+
+  - id: mix-003
+    register: mixed_script
+    text: '{"name": "[أحمد فؤاد](PER)", "city": "[الجيزة](LOC)", "id": 4821}'
+
+  - id: mix-004
+    register: mixed_script
+    text: "ERROR 500 from upstream — reported by [هشام](PER), team [البنية التحتية](ORG)."
+
+  - id: mix-005
+    register: mixed_script
+    text: "git commit -m 'fix login for [مستشفى دار الفؤاد](ORG) tenant'"
+
+  - id: mix-006
+    register: mixed_script
+    text: "Translate to English: [نادية سمير](PER) تعمل في [الإسماعيلية](LOC)."
+
+  - id: mix-007
+    register: mixed_script
+    text: "Ticket #8821 assigned to [رامي](PER) — site visit to [العبور](LOC) scheduled."
+
+  - id: mix-008
+    register: mixed_script
+    text: "SELECT * FROM customers WHERE name = '[علي حسن](PER)' AND city = '[المنصورة](LOC)'"
+
+  # ------------------------------------------------------------------
+  # Hard cases: names that collide with ordinary vocabulary
+  # ------------------------------------------------------------------
+  - id: hard-001
+    register: msa
+    text: "قال [كريم](PER) إن العرض كريم جدا."
+    note: "the same token as a name and as an adjective — only the first is an entity"
+
+  - id: hard-002
+    register: egyptian
+    text: "[أمل](PER) عندها أمل إن المشروع ينجح."
+    note: "name vs the common noun 'hope'"
+
+  - id: hard-003
+    register: msa
+    text: "سافر [جمال عبد الناصر](PER) المهندس إلى [دبي](LOC) للعمل."
+    note: "a very common full-name pattern; also a non-Egyptian LOC"
+
+  - id: hard-004
+    register: egyptian
+    text: "[نور](PER) طفي النور قبل ما تمشي."
+    note: "name vs the common noun 'light'"
+
+  - id: hard-005
+    register: msa
+    text: "يعمل [سعيد](PER) في المكان وهو سعيد بالنتيجة."
+
+  - id: hard-006
+    register: egyptian
+    text: "[إيمان](PER) جت من [المنيا](LOC) امبارح."
+
+  - id: hard-007
+    register: msa
+    text: "تخرج [عادل](PER) من [الأكاديمية العربية للعلوم والتكنولوجيا](ORG)."
+
+  - id: hard-008
+    register: mixed_script
+    text: "Name: [مُحَمَّد عَلِي](PER) — note the diacritics in the source system."
+    note: "fully diacritised name; the model sees marks a tokenizer may split oddly"
+
+  - id: hard-009
+    register: mixed_script
+    text: "اسم العميل: [محمـــد](PER) (kept the tatweel from the legacy export)"
+    note: "tatweel inside the name"
+
+  - id: hard-010
+    register: egyptian
+    text: "[شريف](PER) راح [الأقصر](LOC) و[أسوان](LOC) في نفس الرحلة."
+
+  # ------------------------------------------------------------------
+  # Negatives: no entities at all. These carry the false-positive score.
+  # ------------------------------------------------------------------
+  - id: neg-001
+    register: egyptian
+    text: "عايز أعرف إزاي أعمل الحاجة دي بالطريقة الصح."
+
+  - id: neg-002
+    register: msa
+    text: "يرجى مراجعة التقرير قبل نهاية الأسبوع الحالي."
+
+  - id: neg-003
+    register: egyptian
+    text: "الشركة قررت تأجيل الاجتماع لحد الأسبوع الجاي."
+    note: "'الشركة' is a bare common noun, not a named organisation"
+
+  - id: neg-004
+    register: msa
+    text: "ما هو الفرق بين قاعدة البيانات العلائقية وغير العلائقية؟"
+
+  - id: neg-005
+    register: egyptian
+    text: "ممكن تشرحلي الكود ده بيعمل إيه بالظبط؟"
+
+  - id: neg-006
+    register: msa
+    text: "تم تحديث النظام بنجاح ولا توجد أخطاء مسجلة."
+
+  - id: neg-007
+    register: mixed_script
+    text: "Refactor this function to use async/await — اكتب التعليقات بالعربي."
+
+  - id: neg-008
+    register: egyptian
+    text: "المدير قال إن الميزانية هتتراجع الشهر الجاي."
+    note: "'المدير' is a role, not a name"
+
+  - id: neg-009
+    register: msa
+    text: "يحتوي الملف على ثلاثة أعمدة رئيسية وتاريخ الإنشاء."
+
+  - id: neg-010
+    register: egyptian
+    text: "حاسب، الملف ده كبير أوي وممكن ياخد وقت في الرفع."
+
+  - id: neg-011
+    register: mixed_script
+    text: "def normalize(text: str) -> tuple[str, list[int]]:  # يرجع خريطة الإزاحات"
+
+  - id: neg-012
+    register: msa
+    text: "الرجاء إرفاق المستندات المطلوبة مع الطلب."

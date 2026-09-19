@@ -47,6 +47,9 @@ jobs:
       - name: Install
         run: |
           uv venv .venv
+          # [ner] as well as [dev]: without onnxruntime the tier-2 inference
+          # tests skip, and a silently skipped tier is the gap this suite exists
+          # to close.
           uv pip install --python .venv/bin/python -e ".[dev,ner]"
 
       - name: Lint
@@ -70,6 +73,39 @@ jobs:
 
       - name: Benchmark smoke run
         run: cd ../.. && services/pii-service/.venv/bin/python scripts/benchmark.py --iterations 50
+
+      # Proves the variant-comparison harness runs against real ONNX artifacts.
+      # Uses deterministic stand-in models, not CAMeLBERT -- the real decision
+      # needs real weights and is made by running the same command against
+      # models/ (see README, "Choosing the CAMeLBERT variant").
+      - name: NER comparison harness smoke run
+        run: |
+          cd ../..
+          python - <<'PY'
+          import re, sys
+          from pathlib import Path
+          sys.path.insert(0, "services/pii-service/src")
+          sys.path.insert(0, "services/pii-service/tests")
+          from fake_ner_model import build_fake_ner_model
+          from pii_service.evaluation.gold import GoldSet, Register
+          gold = GoldSet.load("services/pii-service/eval/arabic_ner_gold.yaml")
+          word = re.compile(r"\w+", re.UNICODE)
+          def labels(registers):
+              out = {}
+              for case in gold.cases:
+                  if case.register not in registers:
+                      continue
+                  for span in case.spans:
+                      for i, w in enumerate(word.findall(case.text[span.start:span.end])):
+                          out.setdefault(w, f"{'B' if i == 0 else 'I'}-{span.label}")
+              return out
+          root = Path("/tmp/fakemodels")
+          build_fake_ner_model(root / "camelbert-fake-mix-int8", word_labels=labels(set(Register)))
+          build_fake_ner_model(root / "camelbert-fake-msa-int8", word_labels=labels({Register.MSA}))
+          PY
+          services/pii-service/.venv/bin/python scripts/eval_arabic_ner.py \
+            --model /tmp/fakemodels/camelbert-fake-mix-int8 \
+            --model /tmp/fakemodels/camelbert-fake-msa-int8
 
   guardrail:
     name: litellm guardrail (lint + contract tests)

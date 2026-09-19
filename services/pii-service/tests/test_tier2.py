@@ -281,3 +281,132 @@ def test_analyze_is_inert_without_a_session(tmp_path: Path) -> None:
     recognizer._session = None
 
     assert recognizer.analyze("محمد علي", ["AR_PERSON"]) == []
+
+
+# ---------------------------------------------------------------------------
+# Real ONNX inference, against a deterministic stand-in model
+# ---------------------------------------------------------------------------
+#
+# These execute the code that actually runs in production -- onnxruntime
+# session, tokenizer offsets, BIO decoding, script segmentation, offset
+# rebasing -- without downloading a 400MB checkpoint. See tests/fake_ner_model.py.
+
+
+def _require_onnx() -> None:
+    """Skip visibly rather than pretend tier 2 is covered.
+
+    A silent gap here is the worst outcome: it would look like the ONNX path is
+    tested when it is not. CI installs the extras, so these always run there.
+    """
+    pytest.importorskip("onnx", reason="pip install -e '.[dev,ner]' to cover ONNX inference")
+    pytest.importorskip("onnxruntime", reason="pip install -e '.[dev,ner]'")
+
+
+@pytest.fixture(scope="module")
+def ner(tmp_path_factory: pytest.TempPathFactory) -> ArabicNerRecognizer:
+    _require_onnx()
+    from fake_ner_model import build_fake_ner_model
+
+    directory = build_fake_ner_model(
+        tmp_path_factory.mktemp("fake-ner"),
+        word_labels={
+            "محمد": "B-PER",
+            "علي": "I-PER",
+            "أحمد": "B-PER",
+            "القاهرة": "B-LOC",
+            "الجيزة": "B-LOC",
+            "وزارة": "B-ORG",
+            "الصحة": "I-ORG",
+        },
+    )
+    return ArabicNerRecognizer(model_dir=directory, supported_language="ar")
+
+
+NER_ENTITIES = ["AR_PERSON", "AR_LOCATION", "AR_ORG"]
+
+
+def _found(recognizer: ArabicNerRecognizer, text: str) -> list[tuple[str, str]]:
+    return [
+        (r.entity_type, text[r.start : r.end])
+        for r in sorted(recognizer.analyze(text, NER_ENTITIES), key=lambda r: r.start)
+    ]
+
+
+def test_a_single_token_entity_is_found(ner: ArabicNerRecognizer) -> None:
+    assert _found(ner, "زار أحمد المكان") == [("AR_PERSON", "أحمد")]
+
+
+def test_a_multi_token_entity_merges_into_one_span(ner: ArabicNerRecognizer) -> None:
+    """B-PER followed by I-PER is one person, not two."""
+    assert _found(ner, "اجتمع محمد علي هناك") == [("AR_PERSON", "محمد علي")]
+
+
+def test_labels_map_to_our_entity_types(ner: ArabicNerRecognizer) -> None:
+    found = _found(ner, "محمد في القاهرة مع وزارة الصحة")
+    assert found == [
+        ("AR_PERSON", "محمد"),
+        ("AR_LOCATION", "القاهرة"),
+        ("AR_ORG", "وزارة الصحة"),
+    ]
+
+
+def test_clean_text_produces_nothing(ner: ArabicNerRecognizer) -> None:
+    assert _found(ner, "لا يوجد شيء مهم هنا") == []
+
+
+def test_offsets_are_rebased_across_a_latin_prefix(ner: ArabicNerRecognizer) -> None:
+    """The Arabic run starts partway in; its offsets must be shifted back."""
+    text = "Please review this record for محمد علي today"
+    found = ner.analyze(text, NER_ENTITIES)
+
+    assert len(found) == 1
+    assert text[found[0].start : found[0].end] == "محمد علي"
+
+
+def test_two_arabic_runs_around_latin_both_report(ner: ArabicNerRecognizer) -> None:
+    text = "محمد wrote the patch and القاهرة is the site"
+    assert {surface for _, surface in _found(ner, text)} == {"محمد", "القاهرة"}
+
+
+def test_latin_only_text_is_never_sent_to_the_model(ner: ArabicNerRecognizer) -> None:
+    assert _found(ner, "Please review this pull request today") == []
+
+
+def test_entities_not_requested_are_not_returned(ner: ArabicNerRecognizer) -> None:
+    found = ner.analyze("محمد في القاهرة", ["AR_LOCATION"])
+    assert [r.entity_type for r in found] == ["AR_LOCATION"]
+
+
+def test_empty_text_is_inert(ner: ArabicNerRecognizer) -> None:
+    assert ner.analyze("", NER_ENTITIES) == []
+
+
+def test_every_span_slices_back_to_real_text(ner: ArabicNerRecognizer) -> None:
+    """The invariant the whole offset design exists for, through the model path."""
+    for text in (
+        "محمد علي في القاهرة",
+        "record: محمد، الجيزة",
+        "أحمد wrote it, القاهرة hosted it",
+        "  محمد  ",
+    ):
+        for result in ner.analyze(text, NER_ENTITIES):
+            assert 0 <= result.start < result.end <= len(text)
+            assert text[result.start : result.end].strip()
+
+
+def test_the_recognizer_name_reaches_the_audit_row(ner: ArabicNerRecognizer) -> None:
+    result = ner.analyze("زار أحمد المكان", NER_ENTITIES)[0]
+    assert result.recognition_metadata["recognizer_name"] == "ArabicNerRecognizer"
+
+
+def test_a_low_confidence_model_is_filtered_by_the_score_floor(
+    tmp_path: Path,
+) -> None:
+    _require_onnx()
+    from fake_ner_model import build_fake_ner_model
+
+    directory = build_fake_ner_model(
+        tmp_path / "unsure", word_labels={"محمد": "B-PER"}, confidence=0.05
+    )
+    recognizer = ArabicNerRecognizer(model_dir=directory, supported_language="ar", score_floor=0.9)
+    assert recognizer.analyze("زار محمد المكان", NER_ENTITIES) == []
