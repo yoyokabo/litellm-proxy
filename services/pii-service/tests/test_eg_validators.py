@@ -208,9 +208,7 @@ def test_international_and_local_forms_agree() -> None:
 )
 def test_separator_and_prefix_variants_all_normalize(template: str) -> None:
     number = synthetic_mobile(prefix="012", rng=random.Random(3))
-    rendered = template.format(
-        n=number, s=number[1:], a=number[:3], b=number[3:7], c=number[7:]
-    )
+    rendered = template.format(n=number, s=number[1:], a=number[:3], b=number[3:7], c=number[7:])
     assert normalize_eg_mobile(rendered) == f"+20{number[1:]}"
 
 

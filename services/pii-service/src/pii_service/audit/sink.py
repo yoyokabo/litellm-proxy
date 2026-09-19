@@ -92,9 +92,7 @@ class AuditSink:
         )
         self._session_factory: Final = async_sessionmaker(self._engine, expire_on_commit=False)
         self._wal: Final = wal or AuditWal(settings.audit_wal_path)
-        self._queue: asyncio.Queue[AuditRecord] = asyncio.Queue(
-            maxsize=settings.audit_queue_max
-        )
+        self._queue: asyncio.Queue[AuditRecord] = asyncio.Queue(maxsize=settings.audit_queue_max)
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
         self.stats: Final = AuditStats()
@@ -172,7 +170,7 @@ class AuditSink:
                 await self._flush(batch)
 
         # Final drain after the stop signal.
-        while (batch := self._drain_queue_nowait(self._settings.audit_batch_size)):
+        while batch := self._drain_queue_nowait(self._settings.audit_batch_size):
             await self._flush(batch)
 
     async def _collect_batch(self, interval: float) -> list[AuditRecord]:
@@ -199,7 +197,7 @@ class AuditSink:
     async def _flush(self, batch: list[AuditRecord]) -> None:
         try:
             await self._insert(batch)
-        except Exception as exc:  # noqa: BLE001 -- fail open, whatever went wrong
+        except Exception as exc:
             self.stats.flush_failures += 1
             logger.error(
                 "audit.flush_failed",
@@ -254,7 +252,7 @@ class AuditSink:
                 continue
             try:
                 await self._insert(records)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "audit.wal.replay_deferred",
                     segment=segment.name,
@@ -275,7 +273,7 @@ class AuditSink:
         try:
             async with self._engine.connect() as connection:
                 await connection.execute(text("SELECT 1"))
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
         return True
 

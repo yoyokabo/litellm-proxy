@@ -1,0 +1,21 @@
+# Ruff configuration for files outside services/pii-service (which carries its
+# own config in pyproject.toml). Kept in sync with it.
+
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC", "S", "T20"]
+ignore = [
+    "S101",
+    # Arabic-language codebase -- see services/pii-service/pyproject.toml.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[lint.per-file-ignores]
+# Operator-facing CLI tools: printing a report is the whole job, and the RNG is
+# seeded for reproducible fixtures rather than used for anything secret.
+"scripts/*" = ["T201", "S311"]
+"services/litellm-pii-guardrail/tests/*" = ["S", "T20"]

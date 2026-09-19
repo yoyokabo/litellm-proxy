@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from conftest import CONFIG_DIR
 from pii_service.audit.sink import AuditSink
 from pii_service.db.models import Base, PiiEvent
 from pii_service.main import create_app
@@ -27,8 +28,6 @@ from pii_service.synthetic import (
     synthetic_national_id,
     to_arabic_indic,
 )
-
-from conftest import CONFIG_DIR
 
 PEPPER = "0123456789abcdef0123456789abcdef"
 
@@ -121,9 +120,7 @@ def test_findings_never_contain_the_matched_value(
 ) -> None:
     client, _ = app_client
     nid = synthetic_national_id(rng=random.Random(13))
-    response = client.post(
-        "/analyze", json={"request_id": "r", "texts": [f"id {nid}"]}
-    )
+    response = client.post("/analyze", json={"request_id": "r", "texts": [f"id {nid}"]})
     body = response.json()
 
     serialized = response.text
@@ -167,7 +164,6 @@ def test_audit_rows_are_written(app_client: tuple[TestClient, object]) -> None:
         request_id="call-abc",
     )
 
-
     async def _read() -> list[PiiEvent]:
         # Give the background flusher a moment.
         await anyio.sleep(0.4)
@@ -192,7 +188,6 @@ def test_no_audit_row_contains_the_value(app_client: tuple[TestClient, object]) 
     client, engine = app_client
     nid = synthetic_national_id(rng=random.Random(23))
     _analyze(client, texts=[f"id {nid}"], request_id="call-xyz")
-
 
     async def _read() -> list[dict[str, object]]:
         await anyio.sleep(0.4)
@@ -232,7 +227,6 @@ def test_cache_hit_still_writes_audit_rows(app_client: tuple[TestClient, object]
     _analyze(client, texts=[text], request_id="first")
     _analyze(client, texts=[text], request_id="second")
 
-
     async def _count() -> int:
         await anyio.sleep(0.4)
         async with engine.connect() as connection:  # type: ignore[attr-defined]
@@ -252,9 +246,7 @@ def test_empty_texts_is_accepted(app_client: tuple[TestClient, object]) -> None:
 
 def test_unknown_field_is_rejected(app_client: tuple[TestClient, object]) -> None:
     client, _ = app_client
-    response = client.post(
-        "/analyze", json={"request_id": "r", "texts": ["x"], "surprise": True}
-    )
+    response = client.post("/analyze", json={"request_id": "r", "texts": ["x"], "surprise": True})
     assert response.status_code == 422
 
 

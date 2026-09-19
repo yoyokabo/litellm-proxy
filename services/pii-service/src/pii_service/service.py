@@ -52,7 +52,7 @@ class PiiService:
         masked_texts: list[str] = []
         all_spans: list[PreparedSpan] = []
         every_text_cached = True
-        language = request.language
+        language: str | None = request.language
 
         for index, text in enumerate(request.texts):
             spans, from_cache, detected_lang = self._spans_for(text, index, request)
@@ -158,9 +158,7 @@ class PiiService:
             context_offset=context_offset,
         )
 
-    def _record(
-        self, spans: list[PreparedSpan], request: AnalyzeRequest, latency_ms: int
-    ) -> None:
+    def _record(self, spans: list[PreparedSpan], request: AnalyzeRequest, latency_ms: int) -> None:
         if not spans:
             return
 

@@ -138,7 +138,10 @@ def _prepared(
     value: str = "28503122148219",
 ) -> PreparedSpan:
     return PreparedSpan.from_detected(
-        _span(entity_type, value), text_index=0, policy=policy, pepper=PEPPER  # type: ignore[arg-type]
+        _span(entity_type, value),
+        text_index=0,
+        policy=policy,
+        pepper=PEPPER,  # type: ignore[arg-type]
     )
 
 
@@ -234,11 +237,7 @@ def test_wal_contains_no_pii(tmp_path: Path, policy: object) -> None:
     nid = synthetic_national_id(rng=random.Random(8))
     wal = AuditWal(tmp_path)
     wal.append(
-        [
-            AuditRecord.from_prepared(
-                _prepared(policy, value=nid), RequestContext(request_id="r")
-            )
-        ]
+        [AuditRecord.from_prepared(_prepared(policy, value=nid), RequestContext(request_id="r"))]
     )
     contents = "".join(p.read_text(encoding="utf-8") for p in wal.segments())
     assert nid not in contents

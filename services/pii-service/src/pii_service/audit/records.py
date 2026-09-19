@@ -101,6 +101,23 @@ class AuditRecord:
             latency_ms=latency_ms,
         )
 
+    def __repr__(self) -> str:
+        """Redacted: a record is logged far more often than it is inspected.
+
+        ``preview`` is policy-approved for the *database*, which has access
+        controls and a retention policy. A log stream has neither, and it is
+        shipped somewhere else entirely, so a partial national ID does not
+        belong in one. ``value_fp`` is likewise withheld -- it is not
+        reversible, but correlating it across systems is exactly the capability
+        the pepper exists to keep inside the audit database.
+        """
+        return (
+            f"AuditRecord({self.entity_type} action={self.action} "
+            f"request={self.request_id!r} user={self.user_id!r} "
+            f"span={self.span_start}:{self.span_end} len={self.value_len} "
+            f"preview=<redacted> value_fp=<redacted>)"
+        )
+
     def to_row(self) -> dict[str, Any]:
         """Column mapping for a bulk insert."""
         return asdict(self)

@@ -20,7 +20,7 @@ any score arithmetic of our own.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Final
 
@@ -94,7 +94,7 @@ class ContextBoostedPatternRecognizer(PatternRecognizer):
         self._context_boost: Final = context_boost
         self._max_score: Final = max_score
 
-    def analyze(  # noqa: D102 -- inherited
+    def analyze(
         self,
         text: str,
         entities: list[str],
@@ -112,8 +112,6 @@ class ContextBoostedPatternRecognizer(PatternRecognizer):
             if term is None:
                 continue
             result.score = min(self._max_score, result.score + self._context_boost)
-            if result.recognition_metadata is None:  # pragma: no cover - defensive
-                result.recognition_metadata = {}
             result.recognition_metadata[CONTEXT_TERM_KEY] = term
 
         return results
@@ -326,7 +324,7 @@ class EgyptianPassportRecognizer(ContextBoostedPatternRecognizer):
 def build_tier1_recognizers(
     *,
     supported_language: str,
-    context_terms: dict[str, Sequence[str]],
+    context_terms: Mapping[str, Sequence[str]],
     today: date | None = None,
 ) -> list[PatternRecognizer]:
     """Instantiate every tier-1 recognizer for one language.

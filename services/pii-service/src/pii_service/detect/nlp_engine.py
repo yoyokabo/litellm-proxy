@@ -27,7 +27,7 @@ from typing import Final
 import spacy
 from presidio_analyzer.nlp_engine import SpacyNlpEngine
 
-__all__ = ["BlankSpacyNlpEngine", "DEFAULT_LANGUAGES"]
+__all__ = ["DEFAULT_LANGUAGES", "BlankSpacyNlpEngine"]
 
 DEFAULT_LANGUAGES: Final[tuple[str, ...]] = ("en", "ar")
 
@@ -42,14 +42,13 @@ class BlankSpacyNlpEngine(SpacyNlpEngine):
             raise ValueError("at least one language is required")
         self._languages: Final = tuple(languages)
         super().__init__(
-            models=[
-                {"lang_code": lang, "model_name": f"blank:{lang}"} for lang in self._languages
-            ]
+            models=[{"lang_code": lang, "model_name": f"blank:{lang}"} for lang in self._languages]
         )
 
     def load(self) -> None:
         """Build blank pipelines. Deliberately does not call the base implementation."""
-        self.nlp = {lang: spacy.blank(lang) for lang in self._languages}
+        # The base class annotates `nlp` as None until loaded; this is the load.
+        self.nlp = {lang: spacy.blank(lang) for lang in self._languages}  # type: ignore[assignment]
 
     def get_supported_entities(self) -> list[str]:
         """No NER in a blank pipeline. Every entity comes from a recognizer."""

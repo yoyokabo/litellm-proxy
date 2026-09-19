@@ -1,0 +1,119 @@
+# pii-service and its database, joining the LiteLLM deployment that already
+# exists (brief §3, done-criterion 1).
+#
+# The `litellm` network is declared external on purpose: this compose file
+# attaches to a running deployment, it does not own it. If your LiteLLM stack
+# named its network something else, override it:
+#
+#     LITELLM_NETWORK=my_stack_default docker compose up -d
+#
+# Find the name with:  docker network ls
+#
+# pii-db is a SEPARATE Postgres instance from LiteLLM's. The brief is explicit
+# that LiteLLM's own database is not to be touched, and separation is also what
+# lets the audit data have its own backup, retention and access policy -- which
+# for a table that exists to satisfy auditors is the point.
+
+name: pii-guardrail
+
+services:
+  pii-db:
+    image: postgres:16-alpine
+    container_name: pii-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PII_DB_USER:-pii}
+      POSTGRES_PASSWORD: ${PII_DB_PASSWORD:?set PII_DB_PASSWORD in .env}
+      POSTGRES_DB: ${PII_DB_NAME:-pii}
+      # Deterministic collation, so ORDER BY on an Arabic key does not depend
+      # on the host's locale.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - pii-db-data:/var/lib/postgresql/data
+    networks:
+      - pii-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PII_DB_USER:-pii} -d ${PII_DB_NAME:-pii}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    # Not published to the host. Only pii-service needs to reach it, and an
+    # audit database on a host port is an audit database somebody will query
+    # from their laptop.
+    expose:
+      - "5432"
+
+  pii-migrate:
+    build:
+      context: ./services/pii-service
+    image: pii-service:${PII_IMAGE_TAG:-0.1.0}
+    container_name: pii-migrate
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      PII_DATABASE_URL: >-
+        postgresql+psycopg://${PII_DB_USER:-pii}:${PII_DB_PASSWORD}@pii-db:5432/${PII_DB_NAME:-pii}
+      # Migrations do not fingerprint anything, but Settings validates the
+      # pepper on import, so the container needs a valid one to start.
+      PII_AUDIT_PEPPER: ${PII_AUDIT_PEPPER:?set PII_AUDIT_PEPPER in .env}
+    depends_on:
+      pii-db:
+        condition: service_healthy
+    networks:
+      - pii-internal
+
+  pii-service:
+    build:
+      context: ./services/pii-service
+    image: pii-service:${PII_IMAGE_TAG:-0.1.0}
+    container_name: pii-service
+    restart: unless-stopped
+    environment:
+      PII_DATABASE_URL: >-
+        postgresql+psycopg://${PII_DB_USER:-pii}:${PII_DB_PASSWORD}@pii-db:5432/${PII_DB_NAME:-pii}
+      # The service refuses to start if this is unset, empty, the value from
+      # .env.example, or shorter than 32 characters. See README.
+      PII_AUDIT_PEPPER: ${PII_AUDIT_PEPPER:?set PII_AUDIT_PEPPER in .env}
+      PII_LOG_LEVEL: ${PII_LOG_LEVEL:-INFO}
+      PII_LANGUAGES: ${PII_LANGUAGES:-en,ar}
+      PII_ENABLE_TIER2_ARABIC_NER: ${PII_ENABLE_TIER2_ARABIC_NER:-false}
+      PII_ENABLE_TIER3_GLINER: ${PII_ENABLE_TIER3_GLINER:-false}
+      PII_TIER2_MODEL_DIR: ${PII_TIER2_MODEL_DIR:-/models/arabic-ner}
+      PII_DETECTION_CACHE_SIZE: ${PII_DETECTION_CACHE_SIZE:-2048}
+    volumes:
+      # Policy is config, not code: compliance edits these and restarts the
+      # service, without rebuilding an image.
+      - ./services/pii-service/config:/app/config:ro
+      # The fail-open spill. A named volume, because losing it means losing
+      # audit records that the database had not accepted yet.
+      - pii-wal:/var/lib/pii-service/wal
+      # Phase 4 bakes the weights into the image; until then, mount them.
+      - ${PII_MODEL_HOST_DIR:-./models}:/models:ro
+    depends_on:
+      pii-db:
+        condition: service_healthy
+      pii-migrate:
+        condition: service_completed_successfully
+    networks:
+      # Both: pii-internal to reach its database, litellm so the guardrail
+      # inside the LiteLLM container can reach it at http://pii-service:8090.
+      - pii-internal
+      - litellm
+    expose:
+      - "8090"
+    # Uncomment only for local development. In a deployment the chat backend
+    # and the guardrail both reach it over the docker network.
+    # ports:
+    #   - "127.0.0.1:8090:8090"
+
+volumes:
+  pii-db-data:
+  pii-wal:
+
+networks:
+  pii-internal:
+    driver: bridge
+  litellm:
+    external: true
+    name: ${LITELLM_NETWORK:-litellm}

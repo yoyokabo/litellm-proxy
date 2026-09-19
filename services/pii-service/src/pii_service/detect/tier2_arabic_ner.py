@@ -31,13 +31,13 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import structlog
 from presidio_analyzer import EntityRecognizer, Pattern, RecognizerResult
 
 from pii_service.detect.context import normalize_context_terms
-from pii_service.detect.normalize import GAZETTEER, map_span_to_original, normalize
+from pii_service.detect.normalize import GAZETTEER, normalize
 from pii_service.detect.router import Script, script_segments
 from pii_service.detect.tier1_patterns import ContextBoostedPatternRecognizer
 from pii_service.policy.loader import PolicyBundle
@@ -62,6 +62,7 @@ LABEL_MAP: Final[dict[str, str]] = {
     "ORG": "AR_ORG",
 }
 
+_NER_RECOGNIZER_NAME: Final = "ArabicNerRecognizer"
 _MODEL_FILENAME: Final = "model.onnx"
 _TOKENIZER_FILENAME: Final = "tokenizer.json"
 _LABELS_FILENAME: Final = "labels.json"
@@ -93,7 +94,7 @@ class ArabicNerRecognizer(EntityRecognizer):
         super().__init__(
             supported_entities=list(supported_entities),
             supported_language=supported_language,
-            name="ArabicNerRecognizer",
+            name=_NER_RECOGNIZER_NAME,
         )
         self._model_dir: Final = model_dir
         self._score_floor: Final = score_floor
@@ -104,8 +105,8 @@ class ArabicNerRecognizer(EntityRecognizer):
     def load(self) -> None:
         """Load the ONNX session and tokenizer. Called once by Presidio."""
         try:
-            import onnxruntime  # noqa: PLC0415
-            from tokenizers import Tokenizer  # noqa: PLC0415
+            import onnxruntime
+            from tokenizers import Tokenizer
         except ImportError as exc:
             raise Tier2Unavailable(
                 "tier 2 is enabled but its runtime is not installed. "
@@ -161,7 +162,7 @@ class ArabicNerRecognizer(EntityRecognizer):
                         end=segment.start + entity.end,
                         score=entity.score,
                         recognition_metadata={
-                            RecognizerResult.RECOGNIZER_NAME_KEY: self.name,
+                            RecognizerResult.RECOGNIZER_NAME_KEY: _NER_RECOGNIZER_NAME,
                             RecognizerResult.RECOGNIZER_IDENTIFIER_KEY: self.id,
                         },
                     )
@@ -175,7 +176,7 @@ class ArabicNerRecognizer(EntityRecognizer):
         the model is fed the raw chunk rather than a normalized form: a second
         offset translation here would be a second place to get it wrong.
         """
-        import numpy as np  # noqa: PLC0415
+        import numpy as np
 
         encoding = self._tokenizer.encode(chunk)  # type: ignore[union-attr]
         input_ids = np.array([encoding.ids], dtype=np.int64)
@@ -187,8 +188,8 @@ class ArabicNerRecognizer(EntityRecognizer):
             feeds["token_type_ids"] = np.zeros_like(input_ids)
         feeds = {name: value for name, value in feeds.items() if name in expected}
 
-        logits = self._session.run(None, feeds)[0][0]  # type: ignore[union-attr]
-        scores = _softmax(logits)
+        logits: Any = self._session.run(None, feeds)[0][0]  # type: ignore[union-attr]
+        scores: Any = _softmax(logits)
         predictions = scores.argmax(axis=-1)
 
         return _decode_bio(
@@ -199,8 +200,8 @@ class ArabicNerRecognizer(EntityRecognizer):
         )
 
 
-def _softmax(logits: object) -> object:
-    import numpy as np  # noqa: PLC0415
+def _softmax(logits: Any) -> Any:
+    import numpy as np
 
     shifted = logits - np.max(logits, axis=-1, keepdims=True)
     exponentiated = np.exp(shifted)
@@ -322,7 +323,7 @@ def _spans_arabic(text: str, start: int, end: int) -> bool:
 
 
 def _escape(term: str) -> str:
-    import re  # noqa: PLC0415
+    import re
 
     return re.escape(term)
 

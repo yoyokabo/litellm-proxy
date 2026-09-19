@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import random
 from datetime import date
+from itertools import pairwise
 
 import pytest
 
+from conftest import REFERENCE_DATE
 from pii_service.detect.router import (
     PiiRouter,
     Script,
@@ -28,8 +30,6 @@ from pii_service.synthetic import (
     synthetic_tax_id,
     to_arabic_indic,
 )
-
-from conftest import REFERENCE_DATE
 
 
 def entity_types(outcome: object) -> list[str]:
@@ -264,7 +264,7 @@ def test_spans_never_overlap(router: PiiRouter) -> None:
     nid = synthetic_national_id(rng=rng)
     text = f"a {nid} b {synthetic_mobile(rng=rng)} c {synthetic_iban(rng=rng)} d"
     spans = sorted(router.analyze(text).spans, key=lambda s: s.start)
-    for earlier, later in zip(spans, spans[1:], strict=False):
+    for earlier, later in pairwise(spans):
         assert earlier.end <= later.start
 
 
@@ -333,7 +333,7 @@ def test_script_segments_cover_the_text_without_gaps() -> None:
     segments = script_segments(text)
     assert segments[0].start == 0
     assert segments[-1].end == len(text)
-    for earlier, later in zip(segments, segments[1:], strict=False):
+    for earlier, later in pairwise(segments):
         assert earlier.end == later.start
 
 
@@ -343,4 +343,4 @@ def test_script_segments_on_empty_and_neutral_text() -> None:
 
 
 def test_reference_date_is_pinned() -> None:
-    assert REFERENCE_DATE == date(2026, 9, 19)
+    assert date(2026, 9, 19) == REFERENCE_DATE

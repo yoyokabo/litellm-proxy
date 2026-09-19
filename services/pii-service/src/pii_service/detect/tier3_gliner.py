@@ -47,6 +47,8 @@ LABEL_PROMPTS: Final[dict[str, str]] = {
 
 # Latin runs shorter than this are punctuation and stray words between Arabic
 # clauses; running a transformer over them is pure cost.
+_RECOGNIZER_NAME: Final = "GlinerRecognizer"
+
 MIN_SEGMENT_CHARS: Final = 12
 
 
@@ -68,7 +70,7 @@ class GlinerRecognizer(EntityRecognizer):
         super().__init__(
             supported_entities=list(supported_entities),
             supported_language=supported_language,
-            name="GlinerRecognizer",
+            name=_RECOGNIZER_NAME,
         )
         self._model_name: Final = model_name
         self._threshold: Final = threshold
@@ -81,7 +83,7 @@ class GlinerRecognizer(EntityRecognizer):
 
     def load(self) -> None:
         try:
-            from gliner import GLiNER  # noqa: PLC0415
+            from gliner import GLiNER
         except ImportError as exc:
             raise Tier3Unavailable(
                 "tier 3 is enabled but gliner is not installed. "
@@ -127,7 +129,7 @@ class GlinerRecognizer(EntityRecognizer):
                         end=segment.start + int(prediction["end"]),
                         score=float(prediction.get("score", self._threshold)),
                         recognition_metadata={
-                            RecognizerResult.RECOGNIZER_NAME_KEY: self.name,
+                            RecognizerResult.RECOGNIZER_NAME_KEY: _RECOGNIZER_NAME,
                             RecognizerResult.RECOGNIZER_IDENTIFIER_KEY: self.id,
                         },
                     )
@@ -135,7 +137,9 @@ class GlinerRecognizer(EntityRecognizer):
         return results
 
 
-def build_tier3_factory(settings: Settings, *, model_name: str = "urchade/gliner_multi_pii-v1") -> object:
+def build_tier3_factory(
+    settings: Settings, *, model_name: str = "urchade/gliner_multi_pii-v1"
+) -> object:
     def factory(language: str) -> list[EntityRecognizer]:
         recognizer = GlinerRecognizer(model_name=model_name, supported_language=language)
         recognizer.load()

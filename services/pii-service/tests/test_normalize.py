@@ -201,7 +201,7 @@ def test_span_preceded_by_a_stripped_tatweel_run() -> None:
 
 def test_trailing_stripped_run_is_not_swallowed_by_the_span() -> None:
     original = f"محمد{TATWEEL * 3} علي"
-    normalized, offset_map = normalize(original, NAMES)
+    _, offset_map = normalize(original, NAMES)
 
     span = map_span_to_original(offset_map, 0, 4, len(original))
     assert span == (0, 4)

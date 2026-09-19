@@ -34,7 +34,7 @@ __all__ = ["RecognizerFactory", "build_analyzer"]
 # to register for it. Returning an empty list is how a tier declines to load.
 RecognizerFactory = Callable[[str], Sequence[EntityRecognizer]]
 
-_BUILTIN_RECOGNIZERS: Final[dict[str, type[EntityRecognizer]]] = {
+_BUILTIN_RECOGNIZERS: Final[dict[str, Callable[..., EntityRecognizer]]] = {
     "EMAIL_ADDRESS": EmailRecognizer,
     "CREDIT_CARD": CreditCardRecognizer,
     "IBAN_CODE": IbanRecognizer,
@@ -83,8 +83,8 @@ def build_analyzer(
         for factory in (tier2_factory, tier3_factory):
             if factory is None:
                 continue
-            for recognizer in factory(language):
-                registry.add_recognizer(recognizer)
+            for tiered_recognizer in factory(language):
+                registry.add_recognizer(tiered_recognizer)
 
     return AnalyzerEngine(
         registry=registry,

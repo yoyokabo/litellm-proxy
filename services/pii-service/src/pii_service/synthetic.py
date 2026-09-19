@@ -54,9 +54,7 @@ def synthetic_national_id(
     structure but the check digit is deliberately wrong -- the 0.85-score path.
     """
     rng = rng or random.Random()
-    birth_date = birth_date or date(
-        rng.randint(1950, 2005), rng.randint(1, 12), rng.randint(1, 28)
-    )
+    birth_date = birth_date or date(rng.randint(1950, 2005), rng.randint(1, 12), rng.randint(1, 28))
 
     if not 1900 <= birth_date.year <= 2099:
         raise ValueError("birth year must fall in 1900-2099 to be encodable")

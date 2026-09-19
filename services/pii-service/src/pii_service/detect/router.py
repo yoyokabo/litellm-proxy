@@ -219,9 +219,7 @@ class PiiRouter:
         lang = language or self._presidio_language(text)
 
         normalized, offset_map = normalize(text, DIGITS)
-        raw_results = (
-            self._analyzer.analyze(text=normalized, language=lang) if normalized else []
-        )
+        raw_results = self._analyzer.analyze(text=normalized, language=lang) if normalized else []
 
         spans = self._to_original_spans(raw_results, normalized, offset_map, text, lang)
         spans = self._apply_thresholds(spans)

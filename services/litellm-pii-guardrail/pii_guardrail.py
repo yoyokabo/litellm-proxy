@@ -33,6 +33,7 @@ live. Do not "fix" this by also returning structured_messages.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Literal
@@ -54,8 +55,7 @@ class PiiBlockedError(Exception):
     def __init__(self, counts: dict[str, int]) -> None:
         self.counts = counts
         super().__init__(
-            "Request blocked by the pii-ar guardrail. "
-            f"Blocked entities: {sorted(counts.items())}."
+            f"Request blocked by the pii-ar guardrail. Blocked entities: {sorted(counts.items())}."
         )
 
 
@@ -151,7 +151,10 @@ class ArabicPIIGuardrail(CustomGuardrail):
         return masked, counts, {}
 
     def _log_counts(self, request_data: dict, counts: dict[str, int]) -> None:
-        try:
+        # Premium-gated on some builds and a silent no-op on a community
+        # licence. Our audit trail does not depend on it, so a failure here is
+        # never allowed to fail the request.
+        with contextlib.suppress(Exception):
             self.add_standard_logging_guardrail_information_to_request_data(
                 guardrail_json_response={"masked": counts},
                 request_data=request_data,
@@ -159,11 +162,6 @@ class ArabicPIIGuardrail(CustomGuardrail):
                 masked_entity_count=counts,
                 guardrail_provider="pii-ar",
             )
-        except Exception:
-            # Premium-gated on some builds and a no-op on a community licence.
-            # Our audit trail does not depend on it, so a failure here is not
-            # allowed to fail the request.
-            pass
 
     def _key(self, text: str) -> str:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -186,8 +184,10 @@ def _args(tool_call: object) -> str | None:
     function = _function(tool_call)
     if function is None:
         return None
-    value = function.get("arguments") if isinstance(function, dict) else getattr(
-        function, "arguments", None
+    value = (
+        function.get("arguments")
+        if isinstance(function, dict)
+        else getattr(function, "arguments", None)
     )
     return value if isinstance(value, str) and value else None
 

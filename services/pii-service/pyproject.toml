@@ -87,11 +87,20 @@ select = [
 ]
 ignore = [
     "S101",  # assert is fine in tests
+    # This is an Arabic-language codebase. RUF001/2/3 flag every Arabic letter
+    # and Arabic-Indic digit as "ambiguous" with a Latin lookalike, which here
+    # means flagging the subject matter. Suppressed globally rather than with
+    # hundreds of noqa comments that would bury a real finding.
+    "RUF001",
+    "RUF002",
+    "RUF003",
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S", "T20"]
-"scripts/*" = ["T20"]
+# Generates synthetic fixtures, deliberately with a seedable non-crypto RNG:
+# reproducibility is the requirement, unpredictability is not.
+"src/pii_service/synthetic.py" = ["S311"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -101,5 +110,12 @@ packages = ["pii_service"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["presidio_analyzer.*", "presidio_anonymizer.*", "spacy.*", "onnxruntime.*", "gliner.*"]
+module = [
+    "presidio_analyzer.*",
+    "spacy.*",
+    "onnxruntime.*",
+    "gliner.*",
+    # Optional tier-2/3 wheels, absent unless the extras are installed.
+    "tokenizers.*",
+]
 ignore_missing_imports = true

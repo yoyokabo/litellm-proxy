@@ -14,6 +14,7 @@ in an air-gapped image, and a second opinion about overlaps that we do not want.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import pairwise
 
 __all__ = ["Replacement", "splice"]
 
@@ -37,7 +38,7 @@ def splice(text: str, replacements: Sequence[Replacement]) -> str:
 
     ordered = sorted(replacements, key=lambda item: (item[0], item[1]))
 
-    for (start, end, _), (next_start, _, _) in zip(ordered, ordered[1:], strict=False):
+    for (start, end, _), (next_start, _, _) in pairwise(ordered):
         if end > next_start:
             raise ValueError(
                 f"overlapping replacements: ({start}, {end}) overlaps ({next_start}, ...)"

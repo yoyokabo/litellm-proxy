@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any, Final
+from typing import Final
 
 import structlog
+from structlog.typing import EventDict, WrappedLogger
 
 __all__ = ["REDACTED", "configure_logging", "redact_text_keys"]
 
@@ -62,9 +63,7 @@ _FORBIDDEN_KEYS: Final[frozenset[str]] = frozenset(
 _ALLOWED_WHEN_STRING: Final[frozenset[str]] = frozenset({"message"})
 
 
-def redact_text_keys(
-    _logger: object, _name: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+def redact_text_keys(_logger: WrappedLogger, _name: str, event_dict: EventDict) -> EventDict:
     """Drop prompt-carrying keys before anything is rendered.
 
     Deliberately a denylist on key *name* rather than a scan of values: a

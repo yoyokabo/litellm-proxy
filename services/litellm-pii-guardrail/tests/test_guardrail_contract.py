@@ -21,7 +21,6 @@ import respx
 from litellm.llms.openai.chat.guardrail_translation.handler import (
     OpenAIChatCompletionsHandler,
 )
-
 from pii_guardrail import ArabicPIIGuardrail, PiiBlockedError
 
 SERVICE = "http://pii-service:8090"
@@ -182,15 +181,11 @@ async def test_texts_and_tool_calls_are_sent_in_one_call_and_mapped_back_by_posi
 @respx.mock
 async def test_block_raises_with_counts_and_never_the_value() -> None:
     respx.post(f"{SERVICE}/analyze").mock(
-        return_value=_service_reply(
-            [f"id {NID}"], blocked=True, block_reason={"EG_NATIONAL_ID": 2}
-        )
+        return_value=_service_reply([f"id {NID}"], blocked=True, block_reason={"EG_NATIONAL_ID": 2})
     )
 
     with pytest.raises(PiiBlockedError) as caught:
-        await _guardrail().apply_guardrail(
-            {"texts": [f"id {NID}"]}, _request_data(), "request"
-        )
+        await _guardrail().apply_guardrail({"texts": [f"id {NID}"]}, _request_data(), "request")
 
     message = str(caught.value)
     assert "EG_NATIONAL_ID" in message
@@ -342,9 +337,7 @@ async def test_masking_reaches_request_messages_through_the_real_handler() -> No
     # earlier version of this mock into a loud error instead of a silent
     # off-by-one that would have masked the wrong messages.
     respx.post(f"{SERVICE}/analyze").mock(
-        return_value=_service_reply(
-            ["be helpful", f"my id is {MASKED}", f"and again {MASKED}"]
-        )
+        return_value=_service_reply(["be helpful", f"my id is {MASKED}", f"and again {MASKED}"])
     )
 
     data: dict[str, Any] = {
