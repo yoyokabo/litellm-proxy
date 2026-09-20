@@ -91,18 +91,35 @@ class ArabicPIIGuardrail(CustomGuardrail):
         # only content strings and {"text": ...} items, so arguments in
         # conversation history went unscanned on both wire formats; we do not
         # assume the installed version is patched.
-        slots = [(texts, i, t) for i, t in enumerate(texts)]
-        slots += [(tool_calls, i, a) for i, tc in enumerate(tool_calls) if (a := _args(tc))]
+        # The fourth element is the audit row's `field` column. This partition
+        # is ours -- we built both lists -- so it is reported. `message_index`
+        # and `message_role` are not: LiteLLM keeps the text-to-message mapping
+        # in a local of its handler and hands us only a *scoped subset* of
+        # messages, so any index we derived would be an index into a different
+        # list than the one the operator is looking at. A null column is worth
+        # more than a confidently wrong one in an audit trail. The chat backend
+        # calls /analyze directly and does know its own message indices, which
+        # is where those columns get filled.
+        slots = [(texts, i, t, "content") for i, t in enumerate(texts)]
+        slots += [
+            (tool_calls, i, a, "tool_call.args")
+            for i, tc in enumerate(tool_calls)
+            if (a := _args(tc))
+        ]
         if not slots:
             return inputs
 
-        payload = [text for _, _, text in slots]
-        masked, counts, blocked = await self._analyze(payload, request_data, inputs)
+        masked, counts, blocked = await self._analyze(
+            [text for _, _, text, _ in slots],
+            [field for _, _, _, field in slots],
+            request_data,
+            inputs,
+        )
 
         if blocked:
             raise PiiBlockedError(blocked)
 
-        for (container, index, _), new_text in zip(slots, masked, strict=True):
+        for (container, index, _, _), new_text in zip(slots, masked, strict=True):
             if container is texts:
                 texts[index] = new_text
             else:
@@ -116,15 +133,28 @@ class ArabicPIIGuardrail(CustomGuardrail):
         return inputs
 
     async def _analyze(
-        self, texts: list[str], request_data: dict, inputs: GenericGuardrailAPIInputs
+        self,
+        texts: list[str],
+        fields: list[str],
+        request_data: dict,
+        inputs: GenericGuardrailAPIInputs,
     ) -> tuple[list[str], dict[str, int], dict[str, int]]:
-        pending = [t for t in texts if self._key(t) not in self._cache]
+        # `fields` stays parallel to what is actually sent, not to `texts`:
+        # cached entries are dropped from the request, and pii-service reads
+        # the two lists positionally.
+        pending: list[str] = []
+        pending_fields: list[str] = []
+        for text, field in zip(texts, fields, strict=True):
+            if self._key(text) not in self._cache:
+                pending.append(text)
+                pending_fields.append(field)
         if pending:
             try:
                 response = await self._client.post(
                     f"{self.service_url}/analyze",
                     json={
                         "texts": pending,
+                        "fields": pending_fields,
                         "request_id": str(request_data.get("litellm_call_id") or "unknown"),
                         "identity": _identity(request_data),
                         "model": inputs.get("model") or request_data.get("model"),

@@ -56,13 +56,26 @@ WORKDIR /build
 COPY pyproject.toml ./
 COPY src ./src
 
+# The [ner] extra -- onnxruntime and the Rust tokenizers binding -- is part of
+# the image, not an optional add-on, because compose exposes
+# PII_ENABLE_TIER2_ARABIC_NER as a runtime switch. An image where flipping that
+# flag crashes on a missing wheel makes the flag a lie, and the failure would
+# land at startup on the air-gapped host that cannot pip install anything.
+#
+# It costs about 60 MB and does NOT weaken the guarantee above: onnxruntime and
+# tokenizers are self-contained wheels and pull in neither torch nor
+# transformers. tests/test_deployment.py asserts both halves of that -- the
+# extra is present, the deep-learning frameworks are not.
+#
+# Tier 3 (gliner) is deliberately NOT installed: it is off by default pending a
+# latency decision, and it does depend on torch.
 # Resolve into a self-contained venv so the runtime stage needs no compiler.
 RUN --mount=type=secret,id=pip_ca \
     if [ -s /run/secrets/pip_ca ]; then \
         export SSL_CERT_FILE=/run/secrets/pip_ca UV_NATIVE_TLS=1; \
     fi; \
     uv venv /opt/venv \
-    && VIRTUAL_ENV=/opt/venv uv pip install --no-cache .
+    && VIRTUAL_ENV=/opt/venv uv pip install --no-cache ".[ner]"
 
 # ---------------------------------------------------------------------------
 

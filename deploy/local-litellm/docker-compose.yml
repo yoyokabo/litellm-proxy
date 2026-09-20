@@ -1,0 +1,130 @@
+# A local stand-in for the LiteLLM deployment that already exists at the site.
+#
+# The brief is explicit that this repository attaches to an existing proxy and
+# does not own it, so nothing here is part of the product. It exists so the
+# end-to-end path -- client -> LiteLLM -> guardrail -> pii-service -> audit DB
+# -> model -- can be run and verified on a laptop, which is done-criterion 3.
+#
+# It differs from a real deployment in exactly two ways, both deliberate:
+#
+#   * the model is Ollama on the host instead of vLLM on a GPU box, reached
+#     through host.docker.internal;
+#   * the proxy's port is published to 127.0.0.1 so curl can reach it.
+#
+# Everything the guardrail touches -- the mount, the PYTHONPATH, the config
+# block, the network, the virtual key carrying user_api_key_user_id -- is
+# shaped the way it is at a real site.
+#
+#   docker compose up -d --wait
+#
+# The project name fixes the network name, which is what the root compose file
+# attaches to as LITELLM_NETWORK=litellm_default.
+
+name: litellm
+
+services:
+  litellm-db:
+    image: postgres:16-alpine
+    container_name: litellm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm}
+      POSTGRES_DB: litellm
+    volumes:
+      - litellm-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    expose:
+      - "5432"
+
+  # Ollama runs on the host's loopback and a container cannot reach it.
+  # network_mode: host lets this bind the Docker bridge address and forward to
+  # 127.0.0.1, so ollama stays off every other interface. See
+  # ollama-relay/relay.py. A real deployment points at vLLM and drops this.
+  ollama-relay:
+    image: python:3.11-slim-bookworm
+    container_name: ollama-relay
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./ollama-relay/relay.py:/srv/relay.py:ro
+    environment:
+      RELAY_BIND: ${OLLAMA_RELAY_BIND:-172.17.0.1}
+      RELAY_PORT: "11435"
+      RELAY_TARGET_HOST: 127.0.0.1
+      RELAY_TARGET_PORT: "11434"
+    command: ["python", "/srv/relay.py"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket,os; socket.create_connection((os.environ['RELAY_BIND'], 11435), timeout=3).close()\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # Test fixture, not product. Returns the request's messages verbatim as its
+  # completion, so a test can assert on what the *provider* received rather
+  # than on what a language model chose to say. See echo-provider/server.py.
+  echo-provider:
+    image: python:3.11-slim-bookworm
+    container_name: echo-provider
+    restart: unless-stopped
+    volumes:
+      - ./echo-provider/server.py:/srv/server.py:ro
+    command: ["python", "/srv/server.py"]
+    expose:
+      - "8099"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8099/', timeout=3)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  litellm:
+    # Pinned, not :main-latest. The guardrail's mapping rule is internal to
+    # LiteLLM and can change between releases; this is the version
+    # tests/test_guardrail_contract.py drives directly.
+    image: ghcr.io/berriai/litellm:v1.101.0
+    container_name: litellm
+    restart: unless-stopped
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+      echo-provider:
+        condition: service_healthy
+      ollama-relay:
+        condition: service_healthy
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      # The whole of the guardrail: one file, mounted read-only.
+      - ../../services/litellm-pii-guardrail/pii_guardrail.py:/app/pii_guardrail.py:ro
+    environment:
+      PYTHONPATH: /app
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in deploy/local-litellm/.env}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set LITELLM_SALT_KEY in deploy/local-litellm/.env}
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD:-litellm}@litellm-db:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+    # Ollama runs on the host, not in compose. A real deployment points at
+    # vLLM on the GPU host instead and needs neither of these lines.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:4000:4000"
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+volumes:
+  litellm-db-data:
+
+# Left implicit on purpose: compose creates `litellm_default`, and that is the
+# name the root compose file joins as an external network.
