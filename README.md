@@ -385,6 +385,17 @@ Three caveats, all of which matter more than the headline:
   with zero false positives on the 12 entity-free sentences, which is the half
   of the gate that keeps the gateway usable.
 
+**What coverage cannot see.** It scores the share of gold spans overlapped by
+*any* prediction, so a span truncated by one character still passes. That hid a
+real masking bug: CAMeLBERT's WordPiece tokenizer splits Arabic words, and
+inconsistent BIO tags over the sub-words left `المعادي` masked as
+`<AR_LOCATION>ي` — a character of the matched value surviving in the text
+forwarded to the model — and `لمنى` masked as `<AR_LOCATION><AR_LOCATION>`.
+`_tidy_spans` now snaps span edges out to word boundaries and merges what then
+touches. Coverage did not move (80.2%); character recall went 69.5% → 69.7%,
+which is the metric that sees boundary quality. If you add a metric to the
+harness, make it that one.
+
 Extend the gold set and re-run before treating any of this as settled. 91 spans
 decides a variant; it does not characterize a deployment.
 

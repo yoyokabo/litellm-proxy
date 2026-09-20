@@ -18,6 +18,8 @@ from pii_service.detect.tier2_arabic_ner import (
     EgyptianAddressRecognizer,
     Tier2Unavailable,
     _decode_bio,
+    _Entity,
+    _tidy_spans,
     build_tier2_factory,
 )
 from pii_service.policy.loader import PolicyBundle
@@ -410,3 +412,100 @@ def test_a_low_confidence_model_is_filtered_by_the_score_floor(
     )
     recognizer = ArabicNerRecognizer(model_dir=directory, supported_language="ar", score_floor=0.9)
     assert recognizer.analyze("زار محمد المكان", NER_ENTITIES) == []
+
+
+# ---------------------------------------------------------------------------
+# Span tidying: word-boundary snapping and merging
+#
+# Regression tests for two WordPiece artefacts that the coverage-based
+# evaluation cannot see, because coverage scores overlap and both of these
+# still overlap the gold span. They are masking bugs, not detection bugs.
+# ---------------------------------------------------------------------------
+
+
+def test_a_span_that_stops_short_is_extended_to_the_word_boundary() -> None:
+    """The bug: masking left a ي behind after the placeholder.
+
+    المعادي ran 17..24; the model tagged its final sub-word O and the span
+    stopped at 23. Splicing that produced '<AR_LOCATION>ي' -- a character of
+    the matched value surviving in the text forwarded to the model.
+    """
+    text = "أنا رايح لمنى في المعادي بكرة"
+    tidied = _tidy_spans([_Entity(label="LOC", start=17, end=23, score=0.83)], text)
+
+    assert len(tidied) == 1
+    assert (tidied[0].start, tidied[0].end) == (17, 24)
+    assert text[tidied[0].start : tidied[0].end] == "المعادي"
+
+
+def test_two_spans_inside_one_word_become_one() -> None:
+    """The bug: output read '<AR_LOCATION><AR_LOCATION>'.
+
+    لمنى was tagged B-LOC twice rather than B-LOC I-LOC, so the BIO decoder
+    started a second entity on the second sub-word.
+    """
+    text = "أنا رايح لمنى في المعادي بكرة"
+    tidied = _tidy_spans(
+        [
+            _Entity(label="LOC", start=9, end=12, score=0.81),
+            _Entity(label="LOC", start=12, end=13, score=0.77),
+        ],
+        text,
+    )
+
+    assert len(tidied) == 1
+    assert text[tidied[0].start : tidied[0].end] == "لمنى"
+    # Weakest token wins, as everywhere else in this decoder.
+    assert tidied[0].score == pytest.approx(0.77)
+
+
+def test_separate_words_are_not_merged() -> None:
+    """Merging across whitespace would over-mask two places as one."""
+    text = "القاهرة الاسكندرية"
+    tidied = _tidy_spans(
+        [
+            _Entity(label="LOC", start=0, end=7, score=0.9),
+            _Entity(label="LOC", start=8, end=18, score=0.9),
+        ],
+        text,
+    )
+
+    assert len(tidied) == 2
+    assert [text[e.start : e.end] for e in tidied] == ["القاهرة", "الاسكندرية"]
+
+
+def test_different_labels_over_one_word_are_left_to_the_router() -> None:
+    """router._deconflict resolves these across every recognizer at once."""
+    text = "نور سافرت"
+    tidied = _tidy_spans(
+        [
+            _Entity(label="PERS", start=0, end=2, score=0.9),
+            _Entity(label="LOC", start=2, end=3, score=0.6),
+        ],
+        text,
+    )
+
+    assert len(tidied) == 2
+    # Both now cover the whole word, so containment -- not partial overlap --
+    # is what the router sees. splice() raises on partial overlaps.
+    assert {(e.start, e.end) for e in tidied} == {(0, 3)}
+
+
+def test_a_digit_is_not_pulled_into_a_span() -> None:
+    """'عمارة 12' must not absorb the building number into a name."""
+    text = "عمارة 12"
+    tidied = _tidy_spans([_Entity(label="LOC", start=0, end=5, score=0.9)], text)
+
+    assert text[tidied[0].start : tidied[0].end] == "عمارة"
+
+
+def test_a_diacritic_is_not_stranded() -> None:
+    """A combining mark left behind is the same bug as a letter left behind."""
+    text = "محمَد"  # fatha on the third letter
+    tidied = _tidy_spans([_Entity(label="PERS", start=0, end=3, score=0.9)], text)
+
+    assert text[tidied[0].start : tidied[0].end] == text
+
+
+def test_tidying_an_empty_list_is_empty() -> None:
+    assert _tidy_spans([], "أي نص") == []
