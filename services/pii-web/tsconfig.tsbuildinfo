@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/api.ts","./src/main.tsx","./src/types.ts","./src/components/Admin.tsx","./src/components/Chat.tsx","./src/components/DrillDown.tsx","./src/components/EventTable.tsx","./src/components/Login.tsx","./src/components/Timeline.tsx","./src/components/ui/primitives.tsx","./src/lib/format.ts"],"version":"5.9.3"}

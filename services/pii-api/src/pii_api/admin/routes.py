@@ -128,6 +128,29 @@ async def timeline(
     )
 
 
+@router.get("/summary", response_model=SummaryStats)
+async def summary(
+    db: DbSession,
+    _user: RotatedUser,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    user_id: str | None = None,
+    entity_type: Annotated[list[str] | None, Query()] = None,
+    action: Annotated[list[str] | None, Query()] = None,
+    value_fp: str | None = None,
+    search: str | None = None,
+) -> SummaryStats:
+    """Header tiles for the event log, without the bucketed aggregation.
+
+    /timeline returns these too, but only alongside a GROUP BY over time
+    buckets. The log view has no chart, so paying for that grouping on every
+    filter change would be work done to be discarded.
+    """
+    filters = _filters(since, until, user_id, entity_type, action, value_fp, search)
+    stats = await queries.summary_stats(db, filters)
+    return SummaryStats(**{key: int(value or 0) for key, value in stats.items()})
+
+
 @router.get("/events", response_model=EventPage)
 async def events(
     request: Request,

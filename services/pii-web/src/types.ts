@@ -6,6 +6,11 @@ export interface UserView {
   must_change_password: boolean;
 }
 
+/**
+ * The admin panel no longer draws a chart, so nothing in this app consumes
+ * these two. They describe /api/admin/timeline, which the backend still
+ * serves -- kept so restoring the chart is a component and not an API change.
+ */
 export interface TimelineBucket {
   bucket: string;
   entity_type: string;

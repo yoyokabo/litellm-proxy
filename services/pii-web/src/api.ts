@@ -3,7 +3,7 @@ import type {
   EventDetail,
   EventPage,
   FingerprintSummary,
-  TimelineResponse,
+  SummaryStats,
   UserView,
 } from "./types";
 
@@ -53,8 +53,7 @@ export const api = {
       body: JSON.stringify({ current_password, new_password }),
     }),
 
-  timeline: (params: URLSearchParams) =>
-    request<TimelineResponse>(`/api/admin/timeline?${params}`),
+  summary: (params: URLSearchParams) => request<SummaryStats>(`/api/admin/summary?${params}`),
 
   events: (params: URLSearchParams) => request<EventPage>(`/api/admin/events?${params}`),
 

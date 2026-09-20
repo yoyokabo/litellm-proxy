@@ -27,3 +27,4 @@ models/
 # Web app build output and dependencies
 node_modules/
 services/pii-web/dist/
+services/pii-web/tsconfig.tsbuildinfo

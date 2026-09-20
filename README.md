@@ -206,22 +206,26 @@ typing is a real detection call and a real audit row — not a free preview.
 
 ### Admin
 
-Timeline and drill-down only. No leaderboard: brief §10 excludes it, and "who
-leaked the most PII" is a scoreboard that changes behaviour without improving
-it.
+An event log and a drill-down panel. No leaderboard: brief §10 excludes it, and
+"who leaked the most PII" is a scoreboard that changes behaviour without
+improving it.
 
-- **Stacked area by entity category**, not by entity type — fifteen types is a
-  legend nobody reads, six categories is a shape you can see.
-- **Blocked events get their own thin lane.** Folded into the stack, a handful
-  of blocks beside thousands of masks is a band one pixel high, invisible
-  exactly when it matters.
-- **Brush to zoom** filters the virtualized event table below it.
-- **Drill-down is a right-side panel, not a route change**, so the timeline
-  stays on screen as context.
+- **A virtualized event table.** One row per detected span, newest first; only
+  the rows in view are mounted, because a busy gateway produces hundreds of
+  thousands of spans and mounting that many rows locks the tab.
+- **Drill-down is a right-side panel, not a route change**, so the list stays
+  on screen as context.
 - **Clicking a fingerprint pivots to every other occurrence of that value.**
   One click. This is the core investigative move, and it is the thing the
   pepper buys: the panel can say *"this value came from 3 different people
   across 7 requests"* while remaining unable to say what the value is.
+
+> **No chart.** Brief §10 specifies a stacked timeline with brush-to-zoom above
+> this table. It was built and then removed on request: the log is what people
+> actually read, and the chart mostly competed with it for vertical space.
+> `GET /api/admin/timeline` still serves the bucketed series, so restoring it
+> is a component rather than an API change. Dropping Recharts also took the
+> bundle from 555 kB to 167 kB.
 
 Action is never encoded by colour alone — masked is filled, blocked is
 outlined — so the distinction survives a colour-blind reader and a greyscale
@@ -602,7 +606,7 @@ path.
 │   │   └── tests/
 │   ├── litellm-pii-guardrail/  # the ~150-line CustomGuardrail adapter
 │   ├── pii-api/                # web backend: auth, admin queries, chat + SSE
-│   └── pii-web/                # React + Tailwind + Recharts UI
+│   └── pii-web/                # React + Tailwind UI
 ├── deploy/local-litellm/       # TEST HARNESS, not product: a stand-in proxy
 │                               # so done-criterion 3 can be run on a laptop
 └── scripts/

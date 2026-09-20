@@ -11,34 +11,8 @@ export const CATEGORY_COLOR: Record<Category, string> = {
   other: "var(--ent-other)",
 };
 
-export const CATEGORY_ORDER: Category[] = [
-  "id",
-  "person",
-  "contact",
-  "location",
-  "finance",
-  "other",
-];
-
-export const CATEGORY_LABEL: Record<Category, string> = {
-  id: "Identifiers",
-  person: "People",
-  contact: "Contact",
-  location: "Location",
-  finance: "Finance",
-  other: "Other",
-};
-
 export function colorFor(category: string): string {
   return CATEGORY_COLOR[(category as Category) ?? "other"] ?? CATEGORY_COLOR.other;
-}
-
-export function formatTime(iso: string, bucket: "minute" | "hour" | "day" = "hour"): string {
-  const date = new Date(iso);
-  if (bucket === "day") {
-    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  }
-  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 export function formatDateTime(iso: string | null): string {
