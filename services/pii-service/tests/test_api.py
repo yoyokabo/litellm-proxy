@@ -274,3 +274,40 @@ def test_health_reports_tiers_and_audit(app_client: tuple[TestClient, object]) -
 def test_docs_are_not_exposed(app_client: tuple[TestClient, object]) -> None:
     client, _ = app_client
     assert client.get("/docs").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# /policy
+# ---------------------------------------------------------------------------
+
+
+def test_policy_lists_entities_with_their_categories(
+    app_client: tuple[TestClient, object],
+) -> None:
+    """The admin timeline stacks by category and pii_events stores only a type.
+
+    This endpoint is the mapping between them, and it exists so the web
+    backend does not carry a second copy of entities.yaml.
+    """
+    client, _ = app_client
+    response = client.get("/policy")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["version"] >= 1
+    by_type = {entity["entity_type"]: entity for entity in body["entities"]}
+
+    assert by_type["EG_NATIONAL_ID"]["category"] == "id"
+    assert by_type["EG_NATIONAL_ID"]["action"] == "MASK"
+    assert by_type["EG_NATIONAL_ID"]["placeholder"] == "<EG_NATIONAL_ID>"
+    # ALLOW is a real action the UI must render differently from MASK.
+    assert by_type["AR_ORG"]["action"] == "ALLOW"
+
+
+def test_policy_covers_every_category_the_ui_colours(
+    app_client: tuple[TestClient, object],
+) -> None:
+    """Brief §9 gives one colour per category; an unmapped one renders grey."""
+    client, _ = app_client
+    categories = {entity["category"] for entity in client.get("/policy").json()["entities"]}
+    assert {"id", "person", "contact", "location", "finance"} <= categories

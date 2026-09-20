@@ -23,3 +23,7 @@ wal/
 # Model artifacts are baked into the image at build time (phase 4), never committed.
 models/
 *.onnx
+
+# Web app build output and dependencies
+node_modules/
+services/pii-web/dist/

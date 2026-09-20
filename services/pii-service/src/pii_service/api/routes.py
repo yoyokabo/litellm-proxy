@@ -11,7 +11,13 @@ from typing import Annotated, Final
 import structlog
 from fastapi import APIRouter, Depends, Request
 
-from pii_service.api.schemas import AnalyzeRequest, AnalyzeResponse, HealthResponse
+from pii_service.api.schemas import (
+    AnalyzeRequest,
+    AnalyzeResponse,
+    EntityPolicyView,
+    HealthResponse,
+    PolicyResponse,
+)
 from pii_service.service import PiiService
 
 __all__ = ["router"]
@@ -72,6 +78,32 @@ async def health(request: Request, service: ServiceDep) -> HealthResponse:
         database_reachable=reachable,
         audit={**sink.health(), "cache": service.cache_stats()},
         tiers=request.app.state.tiers,
+    )
+
+
+@router.get("/policy", response_model=PolicyResponse)
+async def policy(request: Request) -> PolicyResponse:
+    """The entity policy, for callers that must render or group by it.
+
+    Read-only and derived entirely from the YAML this service already
+    validated at startup. It exists so the admin UI can map entity types to
+    categories without a second copy of entities.yaml drifting out of sync
+    with this one.
+    """
+    bundle = request.app.state.policy
+    return PolicyResponse(
+        version=bundle.entities_file.version,
+        entities=[
+            EntityPolicyView(
+                entity_type=name,
+                category=str(entity.category),
+                action=str(entity.action),
+                tier=entity.tier,
+                score_threshold=entity.score_threshold,
+                placeholder=entity.placeholder,
+            )
+            for name, entity in sorted(bundle.entities.items())
+        ],
     )
 
 

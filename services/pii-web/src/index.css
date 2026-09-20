@@ -1,0 +1,130 @@
+/* Design tokens -- brief §9, verbatim.
+ *
+ * Dark-first with a light theme available. The two rules that matter beyond
+ * the hex values:
+ *
+ *   1. Entity-category colours are deliberately separate from status colours,
+ *      so a stacked timeline full of masked spans never reads as "lots of red
+ *      = bad". Masking is the system working.
+ *   2. Action is never encoded by colour alone. Masked and blocked differ by
+ *      shape as well -- filled versus outlined -- which is also what makes the
+ *      distinction survive a colour-blind reader and a greyscale screenshot.
+ */
+
+/* Self-hosted. A government deployment has no route to fonts.googleapis.com,
+   and a webfont that silently fails to load is a layout that silently changes. */
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/ibm-plex-sans-arabic/400.css";
+@import "@fontsource/ibm-plex-sans-arabic/500.css";
+@import "@fontsource/jetbrains-mono/400.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* neutrals -- dark */
+  --bg-0: #0b0f14;
+  --bg-1: #121821;
+  --bg-2: #1a2230;
+  --border: #263141;
+  --text-1: #e6edf5;
+  --text-2: #94a3b8;
+  --text-3: #64748b;
+
+  /* accent -- teal, not blue: blue stays reserved for "information" */
+  --accent: #14b8a6;
+  --accent-hover: #2dd4bf;
+  --accent-dim: #0f766e;
+
+  /* status */
+  --ok: #34d399;
+  --masked: #fbbf24;
+  --blocked: #f87171;
+  --info: #60a5fa;
+
+  /* entity categories */
+  --ent-id: #a78bfa;
+  --ent-person: #38bdf8;
+  --ent-contact: #2dd4bf;
+  --ent-location: #4ade80;
+  --ent-finance: #f0abfc;
+  --ent-other: #94a3b8;
+
+  color-scheme: dark;
+}
+
+/* Light theme: neutrals invert, accent drops one step, entity palette darkens
+   one step so the same categories stay distinguishable on white. */
+html.light {
+  --bg-0: #f8fafc;
+  --bg-1: #ffffff;
+  --bg-2: #f1f5f9;
+  --border: #d8e0ea;
+  --text-1: #0f172a;
+  --text-2: #475569;
+  --text-3: #64748b;
+
+  --accent: #0f766e;
+  --accent-hover: #0d9488;
+  --accent-dim: #99f6e4;
+
+  --ok: #059669;
+  --masked: #b45309;
+  --blocked: #dc2626;
+  --info: #2563eb;
+
+  --ent-id: #7c3aed;
+  --ent-person: #0284c7;
+  --ent-contact: #0d9488;
+  --ent-location: #16a34a;
+  --ent-finance: #c026d3;
+  --ent-other: #64748b;
+
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-family: Inter, "IBM Plex Sans Arabic", system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Arabic and mixed-script content.
+ *
+ * brief §10: character offsets over Arabic render in visually confusing order
+ * -- a span at 10-24 does not appear "after" one at 0-9. Anywhere this app
+ * shows a fragment of user text next to numeric offsets, the text goes in an
+ * isolated element and the offsets are shown separately as numbers. This class
+ * is that isolation; it must not be removed to "fix" alignment. */
+.bidi-isolate {
+  unicode-bidi: isolate;
+  direction: ltr;
+}
+
+.bidi-auto {
+  unicode-bidi: isolate;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-2);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
