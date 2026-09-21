@@ -203,9 +203,22 @@ class PiiRouter:
         self._analyzer: Final = analyzer
         self._policy: Final = policy
 
-    def analyze(self, text: str, *, language: str | None = None) -> AnalysisOutcome:
-        """Detect, apply policy and produce the masked text."""
+    def analyze(
+        self,
+        text: str,
+        *,
+        language: str | None = None,
+        policy: PolicyBundle | None = None,
+    ) -> AnalysisOutcome:
+        """Detect, apply policy and produce the masked text.
+
+        ``policy`` overrides the one given at construction, so an administrator
+        edit takes effect on the next request without rebuilding the analyzer.
+        It is read once here and used for the whole call: a policy that changed
+        halfway through an analysis would be a race nobody will debug.
+        """
         started = time.perf_counter()
+        active = policy or self._policy
 
         if not text:
             return AnalysisOutcome(
@@ -221,12 +234,13 @@ class PiiRouter:
         normalized, offset_map = normalize(text, DIGITS)
         raw_results = self._analyzer.analyze(text=normalized, language=lang) if normalized else []
 
-        spans = self._to_original_spans(raw_results, normalized, offset_map, text, lang)
-        spans = self._apply_thresholds(spans)
+        spans = self._to_original_spans(raw_results, normalized, offset_map, text, lang, active)
+        spans = self._apply_thresholds(spans, active)
+        spans = self._drop_already_masked(spans, active)
         spans = _deconflict(spans)
         spans.sort(key=lambda s: (s.start, s.end))
 
-        anonymized = self._anonymize(text, spans)
+        anonymized = self._anonymize(text, spans, active)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 
         return AnalysisOutcome(
@@ -253,6 +267,7 @@ class PiiRouter:
         offset_map: list[int],
         text: str,
         lang: str,
+        policy: PolicyBundle,
     ) -> list[DetectedSpan]:
         spans: list[DetectedSpan] = []
         for result in results:
@@ -263,8 +278,8 @@ class PiiRouter:
                 continue
 
             start, end = map_span_to_original(offset_map, result.start, result.end, len(text))
-            policy = self._policy.policy_for(result.entity_type)
-            if policy is None:
+            entry = policy.policy_for(result.entity_type)
+            if entry is None:
                 continue
 
             metadata = result.recognition_metadata or {}
@@ -276,36 +291,66 @@ class PiiRouter:
                     start=start,
                     end=end,
                     value=text[start:end],
-                    action=policy.action,
-                    category=policy.category,
+                    action=entry.action,
+                    category=entry.category,
                     lang=lang,
                     context_term=metadata.get(CONTEXT_TERM_KEY),
                 )
             )
         return spans
 
-    def _apply_thresholds(self, spans: Sequence[DetectedSpan]) -> list[DetectedSpan]:
+    def _drop_already_masked(
+        self, spans: Sequence[DetectedSpan], policy: PolicyBundle
+    ) -> list[DetectedSpan]:
+        """Suppress spans whose value is already this entity's masked output.
+
+        Without this, realistic replacement is not idempotent: the chat backend
+        masks Ahmed to "John Doe", the proxy guardrail then detects "John Doe"
+        as a person and masks it to some other name, and the text degrades on
+        every hop. The architecture masks twice by design (brief §2), so the
+        second pass has to be a no-op.
+
+        The cost, stated in replacement_policy.yaml too: a person genuinely
+        named "John Doe" is not masked as a PERSON. That is inherent to
+        replacing PII with text that looks like PII, and it is why the shipped
+        default is an unambiguous placeholder.
+        """
+        return [
+            span for span in spans if not policy.is_replacement_value(span.entity_type, span.value)
+        ]
+
+    def _apply_thresholds(
+        self, spans: Sequence[DetectedSpan], policy: PolicyBundle
+    ) -> list[DetectedSpan]:
         kept: list[DetectedSpan] = []
         for span in spans:
-            policy = self._policy.policy_for(span.entity_type)
-            if policy is not None and span.score >= policy.score_threshold:
+            entry = policy.policy_for(span.entity_type)
+            if entry is not None and span.score >= entry.score_threshold:
                 kept.append(span)
         return kept
 
-    def _anonymize(self, text: str, spans: Sequence[DetectedSpan]) -> str:
-        """Splice placeholders over MASK spans, leaving ALLOW spans intact."""
+    def _anonymize(self, text: str, spans: Sequence[DetectedSpan], policy: PolicyBundle) -> str:
+        """Splice replacements over MASK spans, leaving ALLOW spans intact.
+
+        Rendered without a fingerprint, so a ``surrogate`` rule falls back to
+        its placeholder here. That is deliberate: surrogates are keyed on the
+        audit fingerprint, the pepper belongs to the audit layer, and a
+        detector holding it would be the wrong shape.
+
+        This text is therefore the *placeholder-form* masking, used by the
+        benchmark and by standalone callers. The authoritative masked text --
+        the one that reaches the model -- is produced by ``PiiService``, which
+        has the fingerprint. With the shipped configuration (placeholders
+        everywhere) the two are identical.
+        """
         return splice(
             text,
             [
-                (span.start, span.end, self._placeholder(span.entity_type))
+                (span.start, span.end, policy.render_replacement(span.entity_type, None))
                 for span in spans
                 if span.action is EntityAction.MASK
             ],
         )
-
-    def _placeholder(self, entity_type: str) -> str:
-        policy = self._policy.policy_for(entity_type)
-        return policy.placeholder if policy else f"<{entity_type}>"
 
 
 # ---------------------------------------------------------------------------

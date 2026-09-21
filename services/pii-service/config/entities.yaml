@@ -121,6 +121,11 @@ entities:
     action: MASK
     score_threshold: 0.7
     placeholder: "<PERSON>"
+    # The label tier 3 (GLiNER2) is conditioned on. Schema-conditioned means
+    # this is a prompt passed at inference, not a trained class -- which is why
+    # an administrator can add a new one at runtime. Wording changes recall:
+    # treat an edit here as a model change and re-run the eval.
+    gliner_prompt: "person name"
 
   LOCATION:
     category: location
@@ -128,6 +133,7 @@ entities:
     action: MASK
     score_threshold: 0.7
     placeholder: "<LOCATION>"
+    gliner_prompt: "location"
 
   ORGANIZATION:
     category: other
@@ -135,3 +141,4 @@ entities:
     action: ALLOW
     score_threshold: 0.7
     placeholder: "<ORGANIZATION>"
+    gliner_prompt: "organization"

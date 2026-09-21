@@ -83,6 +83,16 @@ class Settings(BaseSettings):
     tier2_model_dir: Path | None = None
     detection_cache_size: Annotated[int, Field(ge=0)] = 2048
 
+    # -- admin API ---------------------------------------------------------
+    # Bearer token for /admin. Empty disables those routes entirely, which is
+    # the default: a deployment that has not deliberately turned on runtime
+    # policy editing should not expose it.
+    #
+    # A placeholder for the phase-2 role auth the brief specifies
+    # (ADMIN_EMAIL / ADMIN_INITIAL_PASSWORD, admin and auditor roles). When
+    # that lands this goes away.
+    admin_token: SecretStr = SecretStr("")
+
     # -- break-glass (brief §6) -------------------------------------------
     # Defined in the data model, unassigned and disabled in phase 1.
     enable_reveal_endpoint: bool = False
@@ -126,6 +136,10 @@ class Settings(BaseSettings):
                 "Generate one with `openssl rand -hex 32`."
             )
         return self
+
+    @property
+    def admin_api_enabled(self) -> bool:
+        return bool(self.admin_token.get_secret_value().strip())
 
     @property
     def pepper_bytes(self) -> bytes:

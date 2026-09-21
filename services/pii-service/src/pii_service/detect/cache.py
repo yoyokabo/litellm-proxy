@@ -30,9 +30,20 @@ __all__ = ["DetectionCache"]
 
 
 def policy_fingerprint(policy: PolicyBundle) -> str:
-    """A short digest of everything that could change a verdict."""
+    """A short digest of everything that could change a cached answer.
+
+    Covers the replacement rule as well as the detection policy, because the
+    cache stores the *resolved* replacement text. An administrator switching
+    PERSON from ``<PERSON>`` to a surrogate changes what a cached entry should
+    say, and a digest that ignored it would serve the old masking until the
+    entry aged out -- which is the kind of stale-policy bug nobody finds.
+
+    The GLiNER prompt is covered too: it is the label tier 3 is conditioned on,
+    so editing it changes what gets detected at all.
+    """
     parts = [
-        f"{name}:{p.action}:{p.score_threshold}:{p.placeholder}"
+        f"{name}:{p.action}:{p.score_threshold}:{p.placeholder}:{p.gliner_prompt}"
+        f":{policy.replacement_rule_for(name).model_dump_json()}"
         for name, p in sorted(policy.entities.items())
     ]
     joined = "|".join(parts)

@@ -345,3 +345,20 @@ def test_the_fingerprint_index_supports_the_investigative_pivot(
         session.execute(PiiEvent.__table__.delete())
         session.commit()
     engine.dispose()
+
+
+def test_the_overlay_table_exists_with_its_unique_constraint(pg_database: str) -> None:
+    """custom_entities holds policy, never a matched value."""
+    engine = create_engine(pg_database)
+    inspector = inspect(engine)
+    columns = {c["name"] for c in inspector.get_columns("custom_entities")}
+    uniques = {
+        tuple(u["column_names"]) for u in inspector.get_unique_constraints("custom_entities")
+    }
+    engine.dispose()
+
+    assert {"entity_type", "gliner_prompt", "replacement_strategy", "updated_by"} <= columns
+    # One row per entity type, so an overlay cannot be ambiguous.
+    assert ("entity_type",) in uniques
+    # The same rule as pii_events: policy only, never what a user typed.
+    assert "value" not in columns

@@ -249,6 +249,104 @@ number.
 
 ---
 
+## Custom labels and replacement policy
+
+Two things an administrator can change at runtime, through `/admin`, without a
+release: **what tier 3 looks for**, and **what a masked span is replaced with**.
+
+The admin *menu* is phase 2 (brief §10) and is not built. These are the
+endpoints it will call, and they work with curl today.
+
+> **Auth is a placeholder.** `/admin` takes a bearer token from
+> `PII_ADMIN_TOKEN`, compared in constant time, and is **disabled when that is
+> unset**. The brief specifies phase-2 role auth in detail (`ADMIN_EMAIL` /
+> `ADMIN_INITIAL_PASSWORD`, `admin` and `auditor`, `must_change_password`);
+> building it now would mean guessing at a design already committed to. The
+> token is all-or-nothing — there is no read-only auditor yet — so pass
+> `X-Admin-User` to record who made each change in `custom_entities.updated_by`.
+
+### Adding a tier-3 label
+
+GLiNER2 is schema-conditioned: labels travel in the forward pass, so a new
+entity type is a prompt, not a retrain.
+
+```bash
+curl -X PUT localhost:8090/admin/entities/PROJECT_CODENAME \
+  -H "Authorization: Bearer $PII_ADMIN_TOKEN" \
+  -H "X-Admin-User: ops@example.com" \
+  -H 'content-type: application/json' \
+  -d '{
+        "entity_type": "PROJECT_CODENAME",
+        "gliner_prompt": "internal project codename",
+        "category": "other", "action": "MASK", "score_threshold": 0.6,
+        "note": "Q3 launch names must not reach the model"
+      }'
+```
+
+`gliner_prompt` is a natural-language phrase, not an identifier — *"employee
+badge number"*, not `EMPLOYEE_BADGE`. Wording changes recall, so treat editing
+one as a model change.
+
+The change takes effect on the next request: the recognizers are **re-prompted
+in place** rather than the analyzer rebuilt, so adding a label costs nothing
+and does not reload the model. A new label needs a prompt — an entity nothing
+can detect is policy that silently does nothing, and the API refuses it.
+
+### Choosing what a span is replaced with
+
+| Strategy | Output | Realistic? |
+|---|---|---|
+| `placeholder` | `<PERSON>` | no — the default |
+| `constant` | `John Doe` | **yes** |
+| `surrogate` | `John Doe` / `Jane Roe` / … stable per value | **yes** |
+| `redact` | *(removed)* | no |
+| `labelled_fingerprint` | `<PERSON:9f75871d>` | no |
+
+```bash
+curl -X PUT localhost:8090/admin/entities/PERSON \
+  -H "Authorization: Bearer $PII_ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{"entity_type": "PERSON",
+       "replacement": {"strategy": "constant", "value": "John Doe"}}'
+```
+
+The baseline lives in
+[`replacement_policy.yaml`](services/pii-service/config/replacement_policy.yaml)
+under change control; the admin overlay layers on top and is stored in
+`custom_entities`. `DELETE /admin/entities/PERSON` reverts to the baseline.
+
+### Read this before switching anything to `constant` or `surrogate`
+
+**The masked prompt stops looking masked.** A human reading "John Doe emailed
+us" cannot tell it was redacted and may treat it as fact. `/admin/policy`
+returns a warning listing every entity in this state, and so does the response
+to the edit that caused it.
+
+**Prefer `surrogate` over `constant`.** A constant collapses distinct values:
+"Ahmed emailed Sara about Omar" becomes "John Doe emailed John Doe about John
+Doe" — a false prompt, and a model asked to summarise it will answer about one
+person. `surrogate` picks from a pool keyed by the value's HMAC fingerprint, so
+two people stay two people and the same person is the same fake name in every
+turn, with no mapping stored anywhere. Pool collisions are expected and are a
+feature: several people sharing a fake name is weaker linkage, not a bug.
+
+**Masking stays idempotent, at a price.** The architecture masks twice — the
+chat backend, then the proxy guardrail — and relies on the second pass finding
+nothing (brief §2). `<PERSON>` is not a name so it never did; "John Doe" is.
+Every string a rule can emit is registered as its vocabulary, and a detected
+value already in that vocabulary is suppressed rather than masked again, so
+`mask(mask(x)) == mask(x)`.
+
+The price: **a person genuinely named "John Doe" is never masked as a PERSON.**
+That is inherent to replacing PII with text that looks like PII, and it is why
+the shipped default is an unambiguous placeholder. Choose a vocabulary unlikely
+to collide with the people in your data.
+
+**`labelled_fingerprint` is the middle path** if you want distinct values to
+stay distinct without the prompt looking real: `<PERSON:9f75871d>` correlates
+against `pii_events.value_fp` for an auditor while staying obviously masked.
+
+---
+
 ## Configuration is policy, not code
 
 Three YAML files under `services/pii-service/config/`, mounted read-only into

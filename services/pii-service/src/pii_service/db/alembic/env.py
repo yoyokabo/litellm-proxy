@@ -16,6 +16,9 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+# Importing every model module is what puts the tables on Base.metadata,
+# which is what `alembic check` compares against.
+from pii_service.db import custom_entities as _custom_entities  # noqa: F401
 from pii_service.db.models import Base
 
 config = context.config

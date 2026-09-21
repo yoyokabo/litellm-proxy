@@ -18,6 +18,8 @@ from typing import Annotated, Final, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from pii_service.policy.replacement import ReplacementRule
+
 __all__ = [
     "EntitiesFile",
     "EntityAction",
@@ -28,6 +30,7 @@ __all__ = [
     "PreviewPolicyFile",
     "PreviewRule",
     "PreviewStrategy",
+    "ReplacementPolicyFile",
 ]
 
 
@@ -72,6 +75,14 @@ class EntityPolicy(_Strict):
     score_threshold: Score
     placeholder: str
     tier: int | None = None
+    gliner_prompt: str | None = None
+    """The natural-language label tier 3 is conditioned on.
+
+    Lives with the entity rather than in a constant in the recognizer, so a
+    label can be added from entities.yaml or from the admin overlay without
+    touching code. Wording changes recall, so treat editing one as a model
+    change and re-run scripts/eval_arabic_ner.py.
+    """
 
     @property
     def is_masked(self) -> bool:
@@ -90,6 +101,7 @@ class _EntityEntry(_Strict):
     score_threshold: Score | None = None
     placeholder: str | None = None
     tier: int | None = None
+    gliner_prompt: str | None = None
 
 
 class EntitiesFile(_Strict):
@@ -111,6 +123,7 @@ class EntitiesFile(_Strict):
                 ),
                 placeholder=entry.placeholder or f"<{name}>",
                 tier=entry.tier,
+                gliner_prompt=entry.gliner_prompt,
             )
             for name, entry in self.entities.items()
         }
@@ -227,6 +240,27 @@ class GazetteerFile(_Strict):
         return tuple(g.ar for g in self.governorates) + tuple(g.en for g in self.governorates)
 
 
+class ReplacementPolicyFile(_Strict):
+    """How each entity's spans are rewritten in the text sent to the model."""
+
+    version: int
+    default: ReplacementRule = ReplacementRule()
+    rules: dict[str, ReplacementRule] = Field(default_factory=dict)
+
+    def rule_for(self, entity_type: str) -> ReplacementRule:
+        return self.rules.get(entity_type, self.default)
+
+    @property
+    def realistic_entities(self) -> tuple[str, ...]:
+        """Entities whose masked output could be mistaken for real data.
+
+        Surfaced by /health and the admin API so a deployment cannot drift into
+        emitting realistic fakes without anyone noticing.
+        """
+        return tuple(sorted(name for name, rule in self.rules.items() if rule.is_realistic))
+
+
 DEFAULT_ENTITIES_FILENAME: Final = "entities.yaml"
 DEFAULT_PREVIEW_FILENAME: Final = "preview_policy.yaml"
 DEFAULT_GAZETTEER_FILENAME: Final = "gazetteer_eg.yaml"
+DEFAULT_REPLACEMENT_FILENAME: Final = "replacement_policy.yaml"

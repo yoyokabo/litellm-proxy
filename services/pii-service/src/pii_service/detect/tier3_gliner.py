@@ -21,7 +21,7 @@ been run on hardware that resembles production.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Final
 
 import structlog
@@ -30,15 +30,21 @@ from presidio_analyzer import EntityRecognizer, RecognizerResult
 from pii_service.detect.router import Script, script_segments
 
 if TYPE_CHECKING:
+    from pii_service.policy.loader import PolicyBundle
     from pii_service.settings import Settings
 
 __all__ = ["GlinerRecognizer", "Tier3Unavailable", "build_tier3_factory"]
 
 logger: Final = structlog.get_logger(__name__)
 
-# Our entity type -> the natural-language label GLiNER is conditioned on.
-# These are prompts, not identifiers: wording changes recall, so treat a change
-# here as a model change and re-run the eval.
+# Fallback prompts, used only when a caller builds the recognizer without a
+# policy. The real source is ``PolicyBundle.gliner_prompts`` -- every entity
+# with a ``gliner_prompt``, whether it came from entities.yaml or from an
+# administrator adding a label at runtime.
+#
+# That indirection is the whole feature. GLiNER2 is schema-conditioned: labels
+# are prompts passed in the forward pass, not trained classes, so a new entity
+# type costs a config row rather than a retrain.
 LABEL_PROMPTS: Final[dict[str, str]] = {
     "PERSON": "person name",
     "LOCATION": "location",
@@ -64,18 +70,26 @@ class GlinerRecognizer(EntityRecognizer):
         *,
         model_name: str,
         supported_language: str,
-        supported_entities: Sequence[str] = tuple(LABEL_PROMPTS),
+        supported_entities: Sequence[str] | None = None,
+        prompts: Mapping[str, str] | None = None,
         threshold: float = 0.5,
     ) -> None:
         # Set before super().__init__(): Presidio's EntityRecognizer.__init__
         # calls self.load(), which reads self._model_name. See the equivalent
         # comment in tier2_arabic_ner.py.
+        label_prompts = dict(prompts if prompts is not None else LABEL_PROMPTS)
+        if supported_entities is None:
+            supported_entities = tuple(label_prompts)
+
         self._model_name: Final = model_name
         self._threshold: Final = threshold
         self._model: object | None = None
-        self._prompt_to_entity: Final = {
+        # Reverse map, because a prediction comes back labelled with the prompt
+        # we sent. Two entities sharing a prompt would make that ambiguous, so
+        # the policy loader keeps prompts distinct.
+        self._prompt_to_entity: dict[str, str] = {
             prompt: entity
-            for entity, prompt in LABEL_PROMPTS.items()
+            for entity, prompt in label_prompts.items()
             if entity in supported_entities
         }
         super().__init__(
@@ -141,11 +155,24 @@ class GlinerRecognizer(EntityRecognizer):
 
 
 def build_tier3_factory(
-    settings: Settings, *, model_name: str = "urchade/gliner_multi_pii-v1"
+    settings: Settings,
+    *,
+    model_name: str = "urchade/gliner_multi_pii-v1",
+    policy: PolicyBundle | None = None,
 ) -> object:
+    """Build the tier-3 factory, conditioned on the policy's labels.
+
+    ``policy`` supplies ``gliner_prompts``: the baseline labels from
+    entities.yaml plus anything an administrator added at runtime. Passing None
+    falls back to the built-in three, which is only useful in isolation.
+    """
+    prompts = dict(policy.gliner_prompts) if policy is not None else dict(LABEL_PROMPTS)
+
     def factory(language: str) -> list[EntityRecognizer]:
-        recognizer = GlinerRecognizer(model_name=model_name, supported_language=language)
-        recognizer.load()
-        return [recognizer]
+        # Constructing it loads the model: EntityRecognizer.__init__ calls
+        # load(), which is what raises Tier3Unavailable when gliner is missing.
+        return [
+            GlinerRecognizer(model_name=model_name, supported_language=language, prompts=prompts)
+        ]
 
     return factory

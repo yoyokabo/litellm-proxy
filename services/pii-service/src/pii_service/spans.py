@@ -40,6 +40,14 @@ class PreparedSpan:
     value_fp: str | None = None
     preview: str | None = None
     context_term: str | None = None
+    replacement: str = ""
+    """The exact text this span becomes when masked.
+
+    Resolved here, in the one function that still holds the value, because a
+    ``surrogate`` rule keys on the fingerprint computed two lines above. Every
+    later stage -- cache, masking, API -- carries the answer rather than the
+    inputs, so none of them needs the value or the pepper.
+    """
 
     @classmethod
     def from_detected(
@@ -62,9 +70,10 @@ class PreparedSpan:
             end=span.end,
             value_len=span.value_len,
             lang=span.lang,
-            value_fp=fingerprint(span.entity_type, span.value, pepper),
+            value_fp=(value_fp := fingerprint(span.entity_type, span.value, pepper)),
             preview=policy.render_preview(span.entity_type, span.value),
             context_term=span.context_term,
+            replacement=policy.render_replacement(span.entity_type, value_fp),
         )
 
     @property

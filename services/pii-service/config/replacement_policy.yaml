@@ -1,0 +1,99 @@
+# What a masked span is replaced WITH.
+#
+# Separate from preview_policy.yaml, which governs what reaches the audit
+# database. This governs what reaches the model.
+#
+# Strategies:
+#   placeholder           <PERSON>. Unambiguous. The default, and the safe one.
+#   constant              One fixed string for every match, e.g. "John Doe".
+#   surrogate             A stable pick from `pool`, keyed by the value's
+#                         fingerprint: the same person is the same fake name in
+#                         every turn, and two different people stay different.
+#   redact                Remove the span entirely.
+#   labelled_fingerprint  <PERSON:9f75871d> -- distinct values stay distinct and
+#                         an auditor can correlate against pii_events, while the
+#                         text carries nothing readable.
+#
+# ---------------------------------------------------------------------------
+# READ BEFORE SWITCHING AN ENTITY TO constant OR surrogate
+# ---------------------------------------------------------------------------
+#
+# 1. The masked prompt stops looking masked. A human reading "John Doe emailed
+#    us" cannot tell it was redacted, and may treat it as fact. With
+#    <PERSON> they can.
+#
+# 2. Everything a rule can emit is registered as its vocabulary, and a detected
+#    value already in that vocabulary is suppressed rather than masked again --
+#    that is what keeps a second masking pass a no-op (brief §2). The price is
+#    that a person genuinely named "John Doe" is never masked as a PERSON.
+#    Choose names unlikely to collide with the people in your data.
+#
+# 3. `constant` collapses distinct values: "Ahmed emailed Sara about Omar"
+#    becomes "John Doe emailed John Doe about John Doe", which is a false
+#    prompt. Prefer `surrogate` for any entity that can appear more than once
+#    in a message -- names, places, organisations. `constant` is reasonable for
+#    a singleton like a support email address.
+#
+# All of this is editable at runtime from the admin API; this file is the
+# baseline that ships under change control.
+
+version: 1
+
+default:
+  strategy: placeholder
+
+rules:
+  # --- Egyptian identifiers -------------------------------------------------
+  # Structured IDs stay as placeholders. A realistic-looking fake national ID
+  # in a prompt is worse than an obvious one: it is checksum-valid-looking
+  # garbage that a downstream system might try to act on.
+  EG_NATIONAL_ID:
+    strategy: placeholder
+  EG_PASSPORT:
+    strategy: placeholder
+  EG_TAX_ID:
+    strategy: placeholder
+  EG_IBAN:
+    strategy: placeholder
+  CREDIT_CARD:
+    strategy: placeholder
+
+  # --- Contact --------------------------------------------------------------
+  EG_MOBILE:
+    strategy: placeholder
+  EMAIL_ADDRESS:
+    strategy: placeholder
+
+  # --- People, places, organisations ---------------------------------------
+  # These are the ones where a placeholder reads worst to a model, and where
+  # surrogates are worth the trade-offs above. Shipped as placeholders so no
+  # existing deployment changes behaviour on upgrade; switch them here or from
+  # the admin API.
+  #
+  # To turn on the example the feature was asked for -- English PERSON becomes
+  # "John Doe" -- replace the PERSON rule below with:
+  #
+  #   PERSON:
+  #     strategy: surrogate
+  #     pool: ["John Doe", "Jane Roe", "Sam Poe", "Alex Coe", "Chris Loe"]
+  #
+  # or, for a single fixed name:
+  #
+  #   PERSON:
+  #     strategy: constant
+  #     value: "John Doe"
+  PERSON:
+    strategy: placeholder
+  LOCATION:
+    strategy: placeholder
+  ORGANIZATION:
+    strategy: placeholder
+
+  AR_PERSON:
+    strategy: placeholder
+  AR_LOCATION:
+    strategy: placeholder
+  AR_ORG:
+    strategy: placeholder
+  EG_ADDRESS:
+    strategy: placeholder

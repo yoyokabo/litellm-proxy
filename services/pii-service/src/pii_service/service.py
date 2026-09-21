@@ -22,6 +22,7 @@ from pii_service.detect.cache import DetectionCache
 from pii_service.detect.mask import splice
 from pii_service.detect.router import PiiRouter
 from pii_service.policy.loader import PolicyBundle
+from pii_service.policy.store import PolicyStore
 from pii_service.settings import Settings
 from pii_service.spans import PreparedSpan
 
@@ -39,15 +40,27 @@ class PiiService:
         router: PiiRouter,
         sink: AuditSink,
         cache: DetectionCache,
+        policy_store: PolicyStore | None = None,
     ) -> None:
         self._settings: Final = settings
         self._policy: Final = policy
+        # When present, the effective policy comes from here, so an
+        # administrator edit takes effect on the next request. Absent (tests,
+        # standalone use) the constructor's bundle is the policy.
+        self._policy_store: Final = policy_store
         self._router: Final = router
         self._sink: Final = sink
         self._cache: Final = cache
 
+    @property
+    def policy(self) -> PolicyBundle:
+        """The effective policy. Read once per request, never mid-analysis."""
+        store = self._policy_store
+        return store.current if store is not None else self._policy
+
     def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
         started = time.perf_counter()
+        policy = self.policy
 
         masked_texts: list[str] = []
         all_spans: list[PreparedSpan] = []
@@ -55,7 +68,7 @@ class PiiService:
         language: str | None = request.language
 
         for index, text in enumerate(request.texts):
-            spans, from_cache, detected_lang = self._spans_for(text, index, request)
+            spans, from_cache, detected_lang = self._spans_for(text, index, request, policy)
             every_text_cached &= from_cache
             language = language or detected_lang
 
@@ -84,7 +97,7 @@ class PiiService:
     # -- internals ---------------------------------------------------------
 
     def _spans_for(
-        self, text: str, index: int, request: AnalyzeRequest
+        self, text: str, index: int, request: AnalyzeRequest, policy: PolicyBundle
     ) -> tuple[tuple[PreparedSpan, ...], bool, str | None]:
         if not request.bypass_cache:
             cached = self._cache.get(text, request.language)
@@ -94,12 +107,12 @@ class PiiService:
                 # index is meaningless -- re-stamp it for this call.
                 return tuple(replace(span, text_index=index) for span in cached), True, None
 
-        outcome = self._router.analyze(text, language=request.language)
+        outcome = self._router.analyze(text, language=request.language, policy=policy)
         spans = tuple(
             PreparedSpan.from_detected(
                 span,
                 text_index=index,
-                policy=self._policy,
+                policy=policy,
                 pepper=self._settings.pepper_bytes,
             )
             for span in outcome.spans
@@ -109,18 +122,16 @@ class PiiService:
         return spans, False, outcome.lang
 
     def _mask(self, text: str, spans: tuple[PreparedSpan, ...]) -> str:
+        """Splice each span's already-resolved replacement.
+
+        The span carries the answer rather than the entity type, so a cache hit
+        masks identically to a miss without needing the value or the pepper
+        again.
+        """
         return splice(
             text,
-            [
-                (span.start, span.end, self._placeholder(span.entity_type))
-                for span in spans
-                if span.is_masked
-            ],
+            [(span.start, span.end, span.replacement) for span in spans if span.is_masked],
         )
-
-    def _placeholder(self, entity_type: str) -> str:
-        policy = self._policy.policy_for(entity_type)
-        return policy.placeholder if policy else f"<{entity_type}>"
 
     def _finding(self, span: PreparedSpan, request: AnalyzeRequest) -> Finding:
         context: str | None = None
@@ -185,6 +196,16 @@ class PiiService:
 
     def cache_stats(self) -> dict[str, int | float]:
         return self._cache.stats()
+
+    def invalidate_cache(self) -> None:
+        """Drop cached verdicts after a policy change.
+
+        The cache key already includes the policy fingerprint, so stale entries
+        are unreachable rather than wrong. Clearing them anyway keeps the
+        hit-rate statistic honest after an edit, and means memory is not held
+        by verdicts no key will ever match again.
+        """
+        self._cache.clear()
 
 
 def _counts(spans: list[PreparedSpan]) -> dict[str, int]:
