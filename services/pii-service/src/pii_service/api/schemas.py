@@ -146,6 +146,15 @@ class EntityPolicyView(BaseModel):
     score_threshold: float
     placeholder: str
 
+    # The tier-3 label this entity is detected by, when it has one. Present so
+    # the admin UI can show which entities are model-detected and which are
+    # deterministic without a second copy of the mapping.
+    gliner_prompt: str | None = None
+
+    # What a masked span of this type becomes, and a worked example of it.
+    replacement_strategy: str = "placeholder"
+    replacement_example: str = ""
+
 
 class PolicyResponse(BaseModel):
     """The entity policy, published so callers do not re-implement it.

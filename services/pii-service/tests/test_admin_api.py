@@ -379,3 +379,43 @@ def test_disabling_an_entity_stops_it_being_masked(client: TestClient) -> None:
 
 def test_reload_picks_up_another_replicas_change(client: TestClient) -> None:
     assert client.post("/admin/reload", headers=AUTH).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Integration with the read-only /policy the admin UI renders
+# ---------------------------------------------------------------------------
+
+
+def test_the_public_policy_endpoint_reflects_an_admin_change(client: TestClient) -> None:
+    """The UI reads /policy; it must not show the frozen baseline.
+
+    This is the screen an operator opens to confirm their change landed, so
+    stale data here is worse than stale data anywhere else.
+    """
+    before = {e["entity_type"]: e for e in client.get("/policy").json()["entities"]}
+    assert before["EG_MOBILE"]["replacement_strategy"] == "placeholder"
+
+    _set(client, "EG_MOBILE", replacement={"strategy": "constant", "value": "John Doe"})
+
+    after = {e["entity_type"]: e for e in client.get("/policy").json()["entities"]}
+    assert after["EG_MOBILE"]["replacement_strategy"] == "constant"
+    assert after["EG_MOBILE"]["replacement_example"] == "John Doe"
+
+
+def test_a_custom_label_appears_in_the_public_policy(client: TestClient) -> None:
+    _set(client, "PROJECT_CODENAME", gliner_prompt="internal project codename")
+
+    entities = {e["entity_type"]: e for e in client.get("/policy").json()["entities"]}
+    assert entities["PROJECT_CODENAME"]["gliner_prompt"] == "internal project codename"
+    assert entities["PROJECT_CODENAME"]["tier"] == 3
+
+
+def test_a_disabled_entity_disappears_from_the_public_policy(client: TestClient) -> None:
+    _set(client, "EG_MOBILE", enabled=False)
+    entities = {e["entity_type"] for e in client.get("/policy").json()["entities"]}
+    assert "EG_MOBILE" not in entities
+
+
+def test_the_public_policy_still_needs_no_auth(client: TestClient) -> None:
+    """It carries entity names and thresholds -- no PII, no secrets."""
+    assert client.get("/policy").status_code == 200

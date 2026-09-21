@@ -85,12 +85,17 @@ async def health(request: Request, service: ServiceDep) -> HealthResponse:
 async def policy(request: Request) -> PolicyResponse:
     """The entity policy, for callers that must render or group by it.
 
-    Read-only and derived entirely from the YAML this service already
-    validated at startup. It exists so the admin UI can map entity types to
-    categories without a second copy of entities.yaml drifting out of sync
-    with this one.
+    Read-only, and derived from the *effective* policy: the YAML this service
+    validated at startup plus any administrator overlay. Reading the frozen
+    baseline here would mean the admin UI kept rendering an entity the overlay
+    had already changed or disabled -- stale in exactly the screen an operator
+    opens to confirm their change landed.
+
+    It exists so the admin UI can map entity types to categories without a
+    second copy of entities.yaml drifting out of sync with this one.
     """
-    bundle = request.app.state.policy
+    store = getattr(request.app.state, "policy_store", None)
+    bundle = store.current if store is not None else request.app.state.policy
     return PolicyResponse(
         version=bundle.entities_file.version,
         entities=[
@@ -101,6 +106,11 @@ async def policy(request: Request) -> PolicyResponse:
                 tier=entity.tier,
                 score_threshold=entity.score_threshold,
                 placeholder=entity.placeholder,
+                gliner_prompt=entity.gliner_prompt,
+                replacement_strategy=str(bundle.replacement_rule_for(name).strategy),
+                # A worked example, because "surrogate" tells an operator
+                # nothing about what their prompts will look like.
+                replacement_example=bundle.render_replacement(name, "9f75871d3d222bcb"),
             )
             for name, entity in sorted(bundle.entities.items())
         ],
