@@ -17,7 +17,7 @@ import structlog
 
 from pii_api.settings import Settings
 
-__all__ = ["LiteLlmClient", "PiiServiceClient"]
+__all__ = ["AdminDisabled", "LiteLlmClient", "PiiServiceClient", "UpstreamError"]
 
 logger: Final = structlog.get_logger(__name__)
 
@@ -35,6 +35,11 @@ class PiiServiceClient:
     def __init__(self, settings: Settings) -> None:
         self._base = settings.pii_service_url.rstrip("/")
         self._client = httpx.AsyncClient(timeout=30.0)
+        self._admin_token = settings.pii_admin_token.get_secret_value().strip()
+
+    @property
+    def admin_enabled(self) -> bool:
+        return bool(self._admin_token)
 
     async def analyze(
         self,
@@ -73,8 +78,74 @@ class PiiServiceClient:
         response.raise_for_status()
         return response.json()  # type: ignore[no-any-return]
 
+    # -- entity policy administration -------------------------------------
+    #
+    # The calls behind the admin menu's Entities screen. Each one is a thin
+    # forward: pii-service owns the policy and every rule about what a valid
+    # overlay is, so validating here would be a second copy of those rules
+    # drifting from the first. What this layer adds is *who* -- the caller's
+    # identity, which pii-service records in custom_entities.updated_by.
+
+    def _admin_headers(self, acting_user: str | None) -> dict[str, str]:
+        if not self._admin_token:
+            raise AdminDisabled
+        headers = {"Authorization": f"Bearer {self._admin_token}"}
+        if acting_user:
+            headers["X-Admin-User"] = acting_user
+        return headers
+
+    async def _admin_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        acting_user: str | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = await self._client.request(
+            method,
+            f"{self._base}{path}",
+            headers=self._admin_headers(acting_user),
+            json=json_body,
+        )
+        if response.status_code >= 400:
+            # pii-service's refusals are the useful ones -- "needs a
+            # gliner_prompt, otherwise nothing would ever detect it" is exactly
+            # what the operator needs to read. Carry the status and the detail
+            # through rather than flattening everything to a 502.
+            detail: Any = response.text
+            try:
+                body = response.json()
+                detail = body.get("detail", body) if isinstance(body, dict) else body
+            except ValueError:
+                pass
+            raise UpstreamError(response.status_code, detail)
+        return response.json()  # type: ignore[no-any-return]
+
+    async def admin_policy(self) -> dict[str, Any]:
+        return await self._admin_request("GET", "/admin/policy")
+
+    async def replacement_strategies(self) -> dict[str, Any]:
+        return await self._admin_request("GET", "/admin/replacement-strategies")
+
+    async def upsert_entity(
+        self, entity_type: str, payload: dict[str, Any], *, acting_user: str
+    ) -> dict[str, Any]:
+        return await self._admin_request(
+            "PUT", f"/admin/entities/{entity_type}", acting_user=acting_user, json_body=payload
+        )
+
+    async def delete_entity(self, entity_type: str, *, acting_user: str) -> dict[str, Any]:
+        return await self._admin_request(
+            "DELETE", f"/admin/entities/{entity_type}", acting_user=acting_user
+        )
+
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+class AdminDisabled(RuntimeError):
+    """PII_API_PII_ADMIN_TOKEN is unset, so the entity-policy routes are off."""
 
 
 class LiteLlmClient:
@@ -154,7 +225,7 @@ class LiteLlmClient:
 
 
 class UpstreamError(RuntimeError):
-    def __init__(self, status: int, body: str) -> None:
+    def __init__(self, status: int, body: Any) -> None:
         self.status = status
         self.body = body
         super().__init__(f"upstream returned {status}")

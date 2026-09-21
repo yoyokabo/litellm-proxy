@@ -50,6 +50,17 @@ class Settings(BaseSettings):
 
     # -- upstreams ---------------------------------------------------------
     pii_service_url: str = "http://pii-service:8090"
+    # pii-service's /admin routes take a single bearer token and have no notion
+    # of users. This backend does have users, so it holds that token as a
+    # service-to-service credential and does the authorisation itself: an
+    # authenticated, rotated operator here becomes one authenticated call
+    # there, carrying X-Admin-User so the change is attributed to a person
+    # rather than to whoever holds the token.
+    #
+    # Empty disables the entity-policy routes, matching pii-service's own
+    # behaviour when PII_ADMIN_TOKEN is unset. A deployment that has not opted
+    # in gets 503 and an explanation, not a confusing 401.
+    pii_admin_token: SecretStr = SecretStr("")
     litellm_url: str = "http://litellm:4000"
     litellm_master_key: SecretStr = SecretStr("")
     # Model alias as it appears in the proxy's config.yaml.

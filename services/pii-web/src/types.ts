@@ -113,3 +113,71 @@ export interface ChatTurn {
   streaming?: boolean;
   error?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Entity policy administration
+// ---------------------------------------------------------------------------
+
+/**
+ * How a masked span is rewritten. The names match pii-service's
+ * ReplacementStrategy; the trade-offs are described by the backend and shown
+ * in the dropdown rather than duplicated here, because the reasoning belongs
+ * next to the implementation that has to honour it.
+ */
+export type ReplacementStrategyName =
+  | "placeholder"
+  | "constant"
+  | "surrogate"
+  | "redact"
+  | "labelled_fingerprint";
+
+export interface ReplacementStrategyInfo {
+  name: ReplacementStrategyName;
+  example: string;
+  realistic: boolean;
+  description: string;
+}
+
+export interface EntityView {
+  entity_type: string;
+  /** "baseline" = entities.yaml; "overlay" = changed or added by an operator. */
+  source: "baseline" | "overlay";
+  category: Category;
+  action: string;
+  score_threshold: number;
+  placeholder: string;
+  /** 1 = pattern, 2 = Arabic NER, 3 = a schema-conditioned label. */
+  tier: number | null;
+  /** The English phrase tier 3 is conditioned on, for the labels that have one. */
+  gliner_prompt: string | null;
+  replacement_strategy: ReplacementStrategyName;
+  replacement_example: string;
+  /** True when the replacement looks like real data rather than a placeholder. */
+  replacement_is_realistic: boolean;
+  enabled: boolean;
+  note: string | null;
+  updated_by: string | null;
+}
+
+export interface EntityPolicyView {
+  entities: EntityView[];
+  /** prompt -> entity type, exactly as tier 3 is configured. */
+  tier3_labels: Record<string, string>;
+  tier3_enabled: boolean;
+  realistic_replacement_entities: string[];
+  /** Consequences an operator should read before trusting the screen. */
+  warnings: string[];
+}
+
+/** The body of a PUT. Every field but entity_type is optional. */
+export interface EntityUpsert {
+  entity_type: string;
+  gliner_prompt?: string | null;
+  category?: Category | null;
+  action?: string | null;
+  score_threshold?: number | null;
+  placeholder?: string | null;
+  replacement?: { strategy: ReplacementStrategyName; value?: string | null; pool?: string[] };
+  enabled?: boolean;
+  note?: string | null;
+}

@@ -25,7 +25,7 @@ from typing import Annotated, Final
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -99,6 +99,23 @@ class EntityUpsert(BaseModel):
 
     enabled: bool = True
     note: str | None = Field(default=None, max_length=500)
+
+    # The two policy enums disagree on case -- EntityAction is MASK/BLOCK/ALLOW
+    # and EntityCategory is id/person/contact/... -- because each matches how
+    # its values already appear in entities.yaml and in the audit rows. That is
+    # fine inside the service and a trap at an HTTP boundary, where a caller
+    # round-tripping a value out of GET /policy would send "MASK" and one typing
+    # it by hand would send "mask". Normalise here rather than making every
+    # caller remember which is which.
+    @field_validator("action", mode="before")
+    @classmethod
+    def _upper_action(cls, value: object) -> object:
+        return value.upper() if isinstance(value, str) else value
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _lower_category(cls, value: object) -> object:
+        return value.lower() if isinstance(value, str) else value
 
 
 class EntityView(BaseModel):

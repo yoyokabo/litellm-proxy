@@ -419,3 +419,41 @@ def test_a_disabled_entity_disappears_from_the_public_policy(client: TestClient)
 def test_the_public_policy_still_needs_no_auth(client: TestClient) -> None:
     """It carries entity names and thresholds -- no PII, no secrets."""
     assert client.get("/policy").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Enum casing at the HTTP boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("action", ["MASK", "mask", "Mask"])
+def test_an_action_is_accepted_in_any_case(client: TestClient, action: str) -> None:
+    """The two policy enums disagree on case, and a caller should not have to know.
+
+    EntityAction is MASK/BLOCK/ALLOW and EntityCategory is id/person/...,
+    because each matches how its values already appear in entities.yaml and in
+    the audit rows. Fine inside the service; at an HTTP boundary it means an
+    operator round-tripping a value out of GET /policy sends "MASK" and one
+    typing it by hand sends "mask", and one of them gets a 422 for no reason
+    they can see.
+    """
+    response = _set(client, "PROJECT_CODENAME", gliner_prompt="a codename", action=action)
+    entities = {e["entity_type"]: e for e in response["entities"]}
+    assert entities["PROJECT_CODENAME"]["action"] == "MASK"
+
+
+@pytest.mark.parametrize("category", ["other", "OTHER", "Other"])
+def test_a_category_is_accepted_in_any_case(client: TestClient, category: str) -> None:
+    response = _set(client, "PROJECT_CODENAME", gliner_prompt="a codename", category=category)
+    entities = {e["entity_type"]: e for e in response["entities"]}
+    assert entities["PROJECT_CODENAME"]["category"] == "other"
+
+
+def test_a_genuinely_unknown_action_is_still_refused(client: TestClient) -> None:
+    """Normalising case must not become accepting anything."""
+    response = client.put(
+        "/admin/entities/PROJECT_CODENAME",
+        headers=AUTH,
+        json={"entity_type": "PROJECT_CODENAME", "gliner_prompt": "a codename", "action": "SCRUB"},
+    )
+    assert response.status_code == 422

@@ -145,6 +145,12 @@ services:
       PII_API_DATABASE_URL: >-
         postgresql+psycopg://${PII_DB_USER:-pii}:${PII_DB_PASSWORD}@pii-db:5432/${PII_DB_NAME:-pii}
       PII_API_PII_SERVICE_URL: http://pii-service:8090
+      # The same token pii-service takes, reused as a service-to-service
+      # credential: pii-api authenticates the operator and forwards their
+      # identity, so a policy change is attributed to a person rather than to
+      # whoever holds the token. Leave PII_ADMIN_TOKEN empty and the Entities
+      # screen reports itself disabled instead of failing obscurely.
+      PII_API_PII_ADMIN_TOKEN: ${PII_ADMIN_TOKEN:-}
       PII_API_LITELLM_URL: ${PII_API_LITELLM_URL:-http://litellm:4000}
       # Mints one virtual key per app user, which is what puts a real user id
       # on every audit row the chat produces.
@@ -174,6 +180,7 @@ services:
   pii-web:
     build:
       context: ./services/pii-web
+      secrets: [npm_ca]
     image: pii-web:${PII_IMAGE_TAG:-0.1.0}
     container_name: pii-web
     restart: unless-stopped
@@ -194,6 +201,10 @@ services:
 secrets:
   pip_ca:
     file: ${PIP_CA_BUNDLE:-/dev/null}
+  # The same thing for the npm registry. Separate because a site may mirror one
+  # and not the other, and because the two toolchains read different variables.
+  npm_ca:
+    file: ${NPM_CA_BUNDLE:-/dev/null}
 
 volumes:
   pii-db-data:

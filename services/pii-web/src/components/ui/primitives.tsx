@@ -124,3 +124,100 @@ export function CategoryDot({ category }: { category: string }) {
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="px-4 py-10 text-center text-[13px] text-text-3">{children}</div>;
 }
+
+export function Select<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  options: { value: T; label: string }[];
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value as T)}
+      className="w-full rounded-md border border-border bg-bg-0 px-3 py-2 text-[13px] text-text-1 outline-none focus:border-accent"
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export function Textarea({
+  value,
+  onChange,
+  placeholder,
+  rows = 4,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  rows?: number;
+}) {
+  return (
+    <textarea
+      value={value}
+      rows={rows}
+      placeholder={placeholder}
+      onChange={(event) => onChange(event.target.value)}
+      className="w-full resize-y rounded-md border border-border bg-bg-0 px-3 py-2 font-mono text-[12px] text-text-1 outline-none placeholder:text-text-3 focus:border-accent"
+    />
+  );
+}
+
+/** A form row: label above, control below, optional hint under it. */
+export function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] uppercase tracking-wide text-text-3">{label}</span>
+      {children}
+      {hint && <span className="mt-1 block text-[12px] leading-snug text-text-3">{hint}</span>}
+    </label>
+  );
+}
+
+/**
+ * The tier a label is detected by. Tier 3 is the one an operator can add, so
+ * it is the one that needs to be visually distinct in a list of fifteen.
+ */
+export function TierBadge({ tier }: { tier: number | null }) {
+  if (tier === null) return <span className="text-[11px] text-text-3">—</span>;
+  const label = { 1: "pattern", 2: "Arabic NER", 3: "label" }[tier] ?? `tier ${tier}`;
+  return (
+    <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-text-2">
+      T{tier} {label}
+    </span>
+  );
+}
+
+/**
+ * Marks a replacement that looks like real data.
+ *
+ * The one consequence of "John Doe" an operator must not discover later: a
+ * masked prompt stops looking masked, and a real person named John Doe is
+ * never masked as a person. Warning-coloured, and never colour alone.
+ */
+export function RealisticBadge() {
+  return (
+    <span
+      className="rounded border border-masked px-1.5 py-0.5 text-[11px] text-masked"
+      title="Looks like real data: a masked prompt no longer looks masked, and a value matching this replacement is left alone."
+    >
+      ⚠ realistic
+    </span>
+  );
+}

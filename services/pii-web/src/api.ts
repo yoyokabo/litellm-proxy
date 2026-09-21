@@ -1,8 +1,11 @@
 import type {
   ChatAnalysis,
+  EntityPolicyView,
+  EntityUpsert,
   EventDetail,
   EventPage,
   FingerprintSummary,
+  ReplacementStrategyInfo,
   SummaryStats,
   UserView,
 } from "./types";
@@ -65,6 +68,29 @@ export const api = {
     request<void>(`/api/admin/events/${id}/flag`, {
       method: "POST",
       body: JSON.stringify({ verdict, note: note ?? null }),
+    }),
+
+  // -- entity policy ------------------------------------------------------
+  //
+  // These change what the gateway masks, for everyone, immediately -- no
+  // restart and no redeploy. Each write returns the whole effective policy,
+  // so the screen re-renders from the server's view rather than from a
+  // locally patched copy that could disagree with it.
+
+  entities: () => request<EntityPolicyView>("/api/admin/entities"),
+
+  replacementStrategies: () =>
+    request<{ strategies: ReplacementStrategyInfo[] }>("/api/admin/replacement-strategies"),
+
+  saveEntity: (entity: EntityUpsert) =>
+    request<EntityPolicyView>(`/api/admin/entities/${encodeURIComponent(entity.entity_type)}`, {
+      method: "PUT",
+      body: JSON.stringify(entity),
+    }),
+
+  resetEntity: (entityType: string) =>
+    request<EntityPolicyView>(`/api/admin/entities/${encodeURIComponent(entityType)}`, {
+      method: "DELETE",
     }),
 
   analyzeOnly: (content: string) =>

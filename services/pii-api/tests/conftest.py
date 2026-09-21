@@ -37,6 +37,14 @@ class FakePiiService:
         self.fail = False
         self.blocked = False
 
+        # Entity administration. `admin_token` empty models a deployment that
+        # never set PII_API_PII_ADMIN_TOKEN; `admin_error` models pii-service
+        # refusing a change.
+        self.admin_token = "service-to-service-token"
+        self.admin_error: tuple[int, Any] | None = None
+        self.admin_calls: list[dict[str, Any]] = []
+        self.overlay_entities: list[dict[str, Any]] = []
+
     async def analyze(self, texts: list[str], **kwargs: Any) -> dict[str, Any]:
         if self.fail:
             raise RuntimeError("pii-service is down")
@@ -84,6 +92,54 @@ class FakePiiService:
                 }
             ],
         }
+
+    # -- entity administration --------------------------------------------
+    #
+    # The real client forwards these to pii-service, which owns every rule
+    # about what a valid overlay is. The fake therefore records what it was
+    # asked and can be told to fail: what these tests check is this backend's
+    # own contribution -- authorisation, attribution, and how an upstream
+    # refusal reaches the operator.
+
+    async def admin_policy(self) -> dict[str, Any]:
+        self._require_admin()
+        return {
+            "entities": list(self.overlay_entities),
+            "tier3_labels": {"internal project codename": "PROJECT_CODENAME"},
+            "tier3_enabled": False,
+            "realistic_replacement_entities": [],
+            "warnings": [],
+        }
+
+    async def replacement_strategies(self) -> dict[str, Any]:
+        self._require_admin()
+        return {"strategies": [{"name": "placeholder", "example": "<PERSON>", "realistic": False}]}
+
+    async def upsert_entity(
+        self, entity_type: str, payload: dict[str, Any], *, acting_user: str
+    ) -> dict[str, Any]:
+        self._require_admin()
+        self.admin_calls.append(
+            {"method": "PUT", "entity_type": entity_type, "payload": payload, "by": acting_user}
+        )
+        self.overlay_entities.append({"entity_type": entity_type, **payload})
+        return await self.admin_policy()
+
+    async def delete_entity(self, entity_type: str, *, acting_user: str) -> dict[str, Any]:
+        self._require_admin()
+        self.admin_calls.append({"method": "DELETE", "entity_type": entity_type, "by": acting_user})
+        self.overlay_entities = [
+            e for e in self.overlay_entities if e["entity_type"] != entity_type
+        ]
+        return await self.admin_policy()
+
+    def _require_admin(self) -> None:
+        from pii_api.upstream import AdminDisabled, UpstreamError
+
+        if not self.admin_token:
+            raise AdminDisabled
+        if self.admin_error is not None:
+            raise UpstreamError(*self.admin_error)
 
     async def aclose(self) -> None:
         return None

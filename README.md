@@ -101,6 +101,10 @@ $EDITOR .env          # set PII_AUDIT_PEPPER, PII_DB_PASSWORD, LITELLM_NETWORK
 `LITELLM_NETWORK` must name the docker network your existing LiteLLM stack runs
 on — usually `<compose-project>_default`. Find it with `docker network ls`.
 
+`PII_ADMIN_TOKEN` (`openssl rand -hex 32`) is optional and gates one thing: the
+**Entities** screen, where an operator changes what the gateway masks. Leave it
+empty and that screen reports itself disabled; everything else runs.
+
 ### 3. Bring it up
 
 ```bash
@@ -227,9 +231,18 @@ improving it.
 > is a component rather than an API change. Dropping Recharts also took the
 > bundle from 555 kB to 167 kB.
 
+### Entities
+
+The second admin tab, and the only screen in the app that changes what the
+gateway does rather than reporting on it: add a tier-3 label, or change what a
+masked span is replaced with. Full description in
+[Custom labels and replacement policy](#custom-labels-and-replacement-policy).
+
 Action is never encoded by colour alone — masked is filled, blocked is
 outlined — so the distinction survives a colour-blind reader and a greyscale
-screenshot, both of which happen to audit evidence.
+screenshot, both of which happen to audit evidence. The same rule governs the
+"⚠ realistic" marker on a replacement that looks like real data: a word and a
+border, not a colour.
 
 RTL is handled where brief §10 says it must be: character offsets over Arabic
 render in visually confusing order, so any fragment of user text sits in a
@@ -459,24 +472,45 @@ number.
 
 ## Custom labels and replacement policy
 
-Two things an administrator can change at runtime, through `/admin`, without a
-release: **what tier 3 looks for**, and **what a masked span is replaced with**.
+Two things an administrator can change at runtime, without a release: **what
+tier 3 looks for**, and **what a masked span is replaced with**. Both from the
+**Entities** tab of the admin menu, or with curl against `/admin`.
 
-The admin *menu* is phase 2 (brief §10) and is not built. These are the
-endpoints it will call, and they work with curl today.
+The screen leads with the consequences rather than hiding them in a tooltip,
+because "replace PERSON with John Doe" sounds harmless and is not — see
+[the warning below](#read-this-before-switching-anything-to-constant-or-surrogate).
+Every write returns the whole effective policy and the screen re-renders from
+it, so what you are looking at is what the gateway is doing.
 
-> **Auth is a placeholder.** `/admin` takes a bearer token from
-> `PII_ADMIN_TOKEN`, compared in constant time, and is **disabled when that is
-> unset**. The brief specifies phase-2 role auth in detail (`ADMIN_EMAIL` /
-> `ADMIN_INITIAL_PASSWORD`, `admin` and `auditor`, `must_change_password`);
-> building it now would mean guessing at a design already committed to. The
-> token is all-or-nothing — there is no read-only auditor yet — so pass
-> `X-Admin-User` to record who made each change in `custom_entities.updated_by`.
+### Who is allowed to change it
+
+Two layers, because the two services know different things:
+
+* **`pii-service`'s `/admin`** takes one bearer token from `PII_ADMIN_TOKEN`,
+  compared in constant time, and is **disabled when that is unset**. It has no
+  notion of users, so it cannot attribute a change to anyone.
+* **`pii-api`** does have users. It holds that token as a service-to-service
+  credential (`PII_API_PII_ADMIN_TOKEN`, the same value), authenticates the
+  operator itself — session cookie, and the bootstrap-password gate from
+  brief §10 applies here as everywhere else — and forwards their email as
+  `X-Admin-User`, so `custom_entities.updated_by` names a person rather than
+  whoever holds the token.
+
+It validates almost nothing else: `pii-service` owns the policy rules, and a
+second copy of them in the web backend would be a copy that drifts. Upstream
+refusals are passed through with their status and their reason intact, which
+is why the screen can say *"PROJECT_CODENAME is not in the baseline policy, so
+it needs a gliner_prompt"* instead of *"request failed"*.
+
+Still outstanding from brief §10: there is **no read-only auditor role**. Any
+operator who can sign in to the console can change what the gateway masks.
 
 ### Adding a tier-3 label
 
 GLiNER2 is schema-conditioned: labels travel in the forward pass, so a new
 entity type is a prompt, not a retrain.
+
+In the console: **Entities → Add a custom label**. The equivalent call:
 
 ```bash
 curl -X PUT localhost:8090/admin/entities/PROJECT_CODENAME \

@@ -3,9 +3,10 @@ import { api, PasswordChangeRequired, Unauthorized } from "./api";
 import type { UserView } from "./types";
 import { Admin } from "./components/Admin";
 import { Chat } from "./components/Chat";
+import { Entities } from "./components/Entities";
 import { ChangePassword, Login } from "./components/Login";
 
-type Tab = "chat" | "admin";
+type Tab = "chat" | "admin" | "entities";
 
 export default function App() {
   const [user, setUser] = useState<UserView | null>(null);
@@ -41,7 +42,7 @@ export default function App() {
         <div className="flex items-center gap-6">
           <span className="text-[14px] font-semibold">PII Guardrail</span>
           <nav className="flex gap-1">
-            {(["chat", "admin"] as const).map((option) => (
+            {(["chat", "admin", "entities"] as const).map((option) => (
               <button
                 key={option}
                 onClick={() => setTab(option)}
@@ -73,7 +74,11 @@ export default function App() {
         </div>
       </header>
 
-      <main className="min-h-0 flex-1">{tab === "chat" ? <Chat /> : <Admin />}</main>
+      <main className="min-h-0 flex-1">
+        {tab === "chat" && <Chat />}
+        {tab === "admin" && <Admin />}
+        {tab === "entities" && <Entities />}
+      </main>
     </div>
   );
 }

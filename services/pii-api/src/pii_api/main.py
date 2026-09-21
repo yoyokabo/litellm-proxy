@@ -19,6 +19,7 @@ import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from pii_api.admin.entities import router as entities_router
 from pii_api.admin.routes import router as admin_router
 from pii_api.api.routes import router as auth_router
 from pii_api.auth.service import bootstrap_admin
@@ -102,6 +103,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
 
     app.include_router(auth_router)
     app.include_router(admin_router)
+    app.include_router(entities_router)
     app.include_router(chat_router)
     return app
 
