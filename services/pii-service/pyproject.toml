@@ -32,12 +32,24 @@ ner = [
     "tokenizers>=0.20",
     "numpy>=1.26",
 ]
-# NOTE: there is no 'gliner' extra any more. Tier 3 used to install the gliner
-# package, which declares torch and transformers as core dependencies -- a
-# multi-gigabyte training stack in a CPU inference image, to run a graph that
-# onnxruntime executes alone. The model is now exported to ONNX at build time
-# by scripts/export_gliner_onnx.py and tier 3 runs on the [ner] extra, exactly
-# like tier 2. See detect/tier3_gliner.py.
+# Tier 3: GLiNER2 for Latin script.
+#
+# This pulls in torch AND transformers -- they are core dependencies of the
+# gliner package, not optional ones, and its ONNX adapter imports torch too, so
+# there is no configuration of it that avoids them. Installing this extra is
+# therefore a deliberate trade: the supported upstream path, in exchange for a
+# multi-gigabyte image and the end of the small `docker load` tarball.
+#
+# A deployment that does not enable tier 3 should not install it. See the
+# Dockerfile, which gates it on a build argument for exactly that reason.
+gliner = [
+    "gliner>=0.2.29",
+    # gliner needs these to build the mdeberta-v3 tokenizer, and does not
+    # declare them. Without them from_pretrained raises on a tiktoken import.
+    "tiktoken",
+    "protobuf",
+    "sentencepiece",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

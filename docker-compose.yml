@@ -68,6 +68,12 @@ services:
     build:
       context: ./services/pii-service
       secrets: [pip_ca]
+      args:
+        # Tier 3 brings torch and transformers with it -- core dependencies of
+        # the gliner package, not a choice -- which takes the image from a few
+        # hundred megabytes to several gigabytes and ends the single
+        # `docker load` tarball. Off unless a deployment actually runs tier 3.
+        PII_WITH_TIER3: ${PII_WITH_TIER3:-false}
     image: pii-service:${PII_IMAGE_TAG:-0.1.0}
     container_name: pii-service
     restart: unless-stopped

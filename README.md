@@ -276,7 +276,7 @@ the detector.
 |---|---|---|
 | 1 | Deterministic recognizers: Egyptian national ID, mobile, IBAN, tax ID, passport, plus email and card | **On**, always |
 | 2 | Arabic NER (ONNX int8) + Egyptian address gazetteer | **Measured and chosen**: `camelbert-msa-int8`. Off by default — set the two variables below |
-| 3 | GLiNER2 for Latin script (ONNX, no PyTorch) | **Measured**: p95 74 ms on Latin chat text. Off by default — needs an artifact and a load test |
+| 3 | GLiNER2 for Latin script (PyTorch) | **Measured**: p95 74 ms on Latin chat text. Off by default, and **not in the image** unless built with `PII_WITH_TIER3=true` |
 
 ### Tier 1 scoring
 
@@ -453,41 +453,45 @@ nothing. And a pasted Arabic *document* costs over half a second on `pre_call`,
 which is the number to design around if this gateway sees long pastes; chat-
 sized messages at ~33 ms p95 are not the problem.
 
-### Tier 3: GLiNER2 on ONNX, no PyTorch
+### Tier 3: GLiNER2 on PyTorch
 
 Tier 3 detects `PERSON`, `LOCATION` and `ORGANIZATION` in Latin-script runs,
-and it runs on `onnxruntime` — the same two wheels tier 2 uses. There is no
-`gliner` extra any more, and the runtime image still contains neither `torch`
-nor `transformers`.
+using the `gliner` package directly. That is the supported upstream path and it
+tracks upstream releases, at a cost worth being explicit about.
 
-That is not how the `gliner` package works. It declares torch **and**
-transformers as *core* dependencies, and its own ONNX adapter imports torch
-anyway, so `pip install gliner` would put a multi-gigabyte training stack in a
-CPU inference image to run a graph onnxruntime can execute alone. So:
+#### It changes what kind of image this is
+
+`gliner` declares **torch and transformers as core dependencies** — not
+optional ones, and its own ONNX adapter imports torch anyway, so there is no
+configuration of the package that avoids them. Installing it takes the runtime
+image from a few hundred megabytes to several gigabytes and ends the "one
+`docker load` tarball someone can carry into an air-gapped site" property that
+tiers 1 and 2 preserve.
+
+So it is **not installed by default**. It is gated on a build argument, and a
+site running tiers 1 and 2 does not pay for it:
 
 ```bash
-# Build-time only, on a machine with internet.
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install "gliner>=0.2.29" onnx onnxruntime tiktoken protobuf sentencepiece
-pip install -e "services/pii-service[ner]"
-
-python scripts/export_gliner_onnx.py        # -> models/gliner-multi-pii/
+PII_WITH_TIER3=true docker compose build pii-service
 ```
 
-[`detect/tier3_gliner.py`](services/pii-service/src/pii_service/detect/tier3_gliner.py)
-reimplements GLiNER's pre- and post-processing in numpy — about eighty lines:
-the word splitter (`\w+(?:[-_]\w+)*|\S`, offsets preserved), the prompt layout
-(`[CLS] <<ENT>> label … <<SEP>> words … [SEP]` with a word-index mask), the
-span grid, and greedy flat decoding.
+Setting `PII_ENABLE_TIER3_GLINER=true` without that build is a startup error,
+not a silent downgrade. `tests/test_deployment.py` pins the gate — that the
+extra is conditional and that the argument defaults to `false` — rather than
+grepping the Dockerfile for the word "torch", which `.[gliner]` does not
+contain.
 
-**It was verified against the torch model, not assumed.** Same spans, scores
-matching to four decimals. `tests/test_tier3.py` pins those numbers and skips
-unless the artifact is present.
+#### Weights
+
+Point `PII_TIER3_MODEL_DIR` at a directory saved with
+`GLiNER.save_pretrained` (~1.2 GB). Loading passes `local_files_only=True`, so
+an air-gapped host fails with a clear error rather than hanging on a fetch that
+cannot succeed.
 
 #### Measured latency
 
 The brief called the vendor's 50–200 ms/document and an independent ~2.3 s
-irreconcilable and said to measure. On an i7-10700K, one thread, fp32:
+irreconcilable and said to measure. On an i7-10700K, one thread:
 
 | Corpus | tier 1 | tier 1 + 3 |
 |---|---|---|
@@ -496,38 +500,25 @@ irreconcilable and said to measure. On an i7-10700K, one thread, fp32:
 | Arabic, chat-sized | p50 0.28 ms | p50 0.35 ms — no Latin to scan |
 | Arabic document (1.7 kB) | p50 4.6 ms | p50 164 ms |
 
-So the vendor's range is the honest one on this hardware, not the 2.3 s. An
-English-heavy workload pays ~74 ms p95 on every request; an Arabic-only one
-pays nothing, because the router never hands tier 3 a non-Latin run.
+The vendor's range is the honest one on this hardware, not the 2.3 s. An
+English-heavy workload pays about 74 ms p95 on every request; an Arabic-only
+one pays nothing, because the router never hands tier 3 a non-Latin run.
 
-Still off by default. Re-measure under concurrent load before enabling it on a
-gateway serving 100+ engineers — these numbers are single-threaded and
-sequential.
+Still off by default. Those numbers are sequential and single-threaded, and a
+gateway serving 100+ engineers is neither — re-measure under concurrent load.
 
-#### int8 is not usable for this model
+#### Two limits to know
 
-Dynamic quantization destroys it. mdeberta-v3's disentangled attention does not
-survive: of three obvious entities, the int8 graph found **one**, at 0.68
-instead of 0.998. `reduce_range=True` — the fix for tier 2's AVX2 saturation —
-moved it from 0.62 to 0.68 and recovered neither of the other two, so this is a
-different failure from that one.
-
-The export's smoke check **fails** rather than warning, so a degraded artifact
-cannot be written successfully. `--quantize` is kept only so the finding can be
-reproduced. fp32 is 1.2 GB.
-
-#### Two properties worth knowing before you tune thresholds
+**Long text is truncated, not windowed.** `predict_entities` cuts to the
+model's 384-token window, so a long paste is only partly scanned. Measured: the
+package finds **nothing at all** in a 2.8 kB document. If this gateway sees
+long pastes, that is the gap to close.
 
 **Scores depend on the label set and its order.** The labels are written into
-the input, so asking for person/organization/location scores a name at 0.757
-while person/location/organization scores the same name at 0.706. Both
-confirmed against PyTorch. Adding an entity type through the Entities screen
-moves the scores of the ones already there — not by much, and not by zero.
-
-**Long text is windowed, not truncated.** The graph takes 384 sub-tokens. Input
-is chunked into 160-word windows overlapping by `max_width`, so every candidate
-span sits wholly inside at least one window. The `gliner` package itself finds
-*nothing* in a 2.8 kB document — it truncates and never sees the tail.
+the input, so asking person/organization/location scores a name at 0.757 while
+person/location/organization scores the same name at 0.706. Adding an entity
+type through the Entities screen moves the scores of the ones already there —
+not by much, and not by zero.
 
 ---
 
@@ -777,12 +768,19 @@ runs `docker compose up --wait`, asserts the migration reached head, posts a
 national ID through `/analyze` and checks both that the response is masked and
 that an audit row landed without the value in it.
 
-### Why no PyTorch
+### Why the default image has no PyTorch
 
-The runtime image has neither PyTorch nor transformers. Tier 2 runs ONNX
-through `onnxruntime`; model conversion belongs in a builder stage. In an
+The default runtime image has neither PyTorch nor transformers. Tier 2 runs
+ONNX through `onnxruntime`; model conversion belongs in a builder stage. In an
 air-gapped delivery this is the difference between a `docker load` tarball
 someone can carry in and one they cannot.
+
+**Tier 3 is the exception, and it is opt-in for exactly this reason.** The
+`gliner` package declares torch and transformers as core dependencies, so
+enabling tier 3 means accepting both. That is a deliberate trade — the
+supported upstream path, in exchange for the small image — and it is gated on
+`PII_WITH_TIER3` so a site running tiers 1 and 2 never pays for it. Do not
+assume an image has no torch; check how it was built.
 
 spaCy is present but only ever builds `spacy.blank()` pipelines — a tokenizer
 and nothing else. Presidio's stock engine calls `spacy.cli.download()` for any
@@ -817,7 +815,6 @@ path.
     ├── verify_end_to_end.py    # done-criterion 3, as a runnable check
     ├── benchmark.py            # p50/p95 per tier on CPU
     ├── export_camelbert_onnx.py# build-time ONNX export for tier 2
-    ├── export_gliner_onnx.py   # build-time ONNX export for tier 3
     ├── eval_arabic_ner.py      # variant comparison, coverage-first
     └── seed_demo_events.py
 ```

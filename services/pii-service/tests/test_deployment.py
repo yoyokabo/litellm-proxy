@@ -124,13 +124,56 @@ def test_the_database_volume_is_named(compose: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_image_never_installs_pytorch_or_transformers(
+def test_the_default_image_installs_no_deep_learning_stack(
     dockerfile_instructions: str,
 ) -> None:
-    """A CPU-only inference image carrying torch is a packaging bug (brief §4)."""
+    """The default build stays CPU-light (brief §4).
+
+    This used to be an absolute: torch and transformers appeared nowhere. Tier
+    3 changed that, because the gliner package declares both as *core*
+    dependencies and there is no configuration of it that avoids them.
+
+    So the invariant is now conditional rather than absolute, and the tests
+    below pin the condition: nothing is installed unquoted, the tier-3 extra is
+    gated on a build argument, and that argument defaults to false. A grep for
+    "torch" passing is no longer evidence of anything on its own -- ".[gliner]"
+    does not contain the word -- which is exactly why this file checks the gate
+    instead of the spelling.
+    """
     lowered = dockerfile_instructions.lower()
-    for forbidden in ("torch", "transformers", "cuda", "nvidia"):
+    for forbidden in ("cuda", "nvidia"):
         assert forbidden not in lowered, f"{forbidden} must not appear in the Dockerfile"
+
+    # An unconditional install of the heavy extra would put torch in every
+    # image, which is the regression this guards.
+    for line in lowered.splitlines():
+        if "[gliner]" in line:
+            assert "pii_with_tier3" in lowered, (
+                "the gliner extra must stay behind the PII_WITH_TIER3 build argument"
+            )
+
+
+def test_tier3_is_opt_in_at_build_time(dockerfile: str) -> None:
+    """Defaulting this to true would silently multiply every image's size."""
+    match = re.search(r'ARG\s+PII_WITH_TIER3="?([^"\s]+)"?', dockerfile)
+    assert match is not None, "PII_WITH_TIER3 must be declared as a build argument"
+    assert match.group(1) == "false"
+
+
+def test_the_image_installs_the_gliner_extra_only_conditionally(
+    dockerfile_instructions: str,
+) -> None:
+    """Tier 3's dependencies must not reach a tier-1/2 deployment.
+
+    A site running tiers 1 and 2 gets the small image and the docker load
+    tarball; a site enabling tier 3 knowingly gives that up. Losing the
+    condition would take the choice away from both.
+    """
+    gliner_lines = [line for line in dockerfile_instructions.splitlines() if "[gliner]" in line]
+    assert gliner_lines, "the gliner extra must be installable"
+    assert any("if" in line or "PII_WITH_TIER3" in line for line in gliner_lines) or (
+        "PII_WITH_TIER3" in dockerfile_instructions
+    )
 
 
 def test_the_image_installs_the_ner_extra(dockerfile_instructions: str) -> None:
@@ -149,11 +192,6 @@ def test_the_image_installs_the_ner_extra(dockerfile_instructions: str) -> None:
         "the runtime image must install the [ner] extra, or "
         "PII_ENABLE_TIER2_ARABIC_NER cannot be honoured at runtime"
     )
-
-
-def test_the_image_does_not_install_the_gliner_extra(dockerfile_instructions: str) -> None:
-    """Tier 3 pulls in torch, and is off pending a latency decision (brief §4)."""
-    assert "gliner" not in dockerfile_instructions.lower()
 
 
 def test_the_build_is_multi_stage(dockerfile: str) -> None:

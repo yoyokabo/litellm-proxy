@@ -39,6 +39,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 # the image's own trust store, so nothing here is required in a normal network.
 ARG PIP_INDEX_URL=""
 ARG PIP_TRUSTED_HOST=""
+# Off by default: see the note above the install step.
+ARG PII_WITH_TIER3="false"
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 
@@ -67,15 +69,24 @@ COPY src ./src
 # transformers. tests/test_deployment.py asserts both halves of that -- the
 # extra is present, the deep-learning frameworks are not.
 #
-# Tier 3 (gliner) is deliberately NOT installed: it is off by default pending a
-# latency decision, and it does depend on torch.
+# Tier 3 is gated on a build argument, because it is the one extra that changes
+# what kind of image this is. It brings a deep-learning stack with it (a core
+# dependency of the package, not a choice), which takes the image from a few
+# hundred megabytes to several gigabytes and ends the "one docker load tarball
+# someone can carry in" property. A site that does not enable tier 3 should not
+# pay for it:
+#
+#   docker compose build --build-arg PII_WITH_TIER3=true
 # Resolve into a self-contained venv so the runtime stage needs no compiler.
 RUN --mount=type=secret,id=pip_ca \
     if [ -s /run/secrets/pip_ca ]; then \
         export SSL_CERT_FILE=/run/secrets/pip_ca UV_NATIVE_TLS=1; \
     fi; \
     uv venv /opt/venv \
-    && VIRTUAL_ENV=/opt/venv uv pip install --no-cache ".[ner]"
+    && VIRTUAL_ENV=/opt/venv uv pip install --no-cache ".[ner]" \
+    && if [ "${PII_WITH_TIER3}" = "true" ]; then \
+         VIRTUAL_ENV=/opt/venv uv pip install --no-cache ".[gliner]"; \
+       fi
 
 # ---------------------------------------------------------------------------
 

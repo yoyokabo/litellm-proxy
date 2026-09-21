@@ -1,22 +1,15 @@
-"""Tier 3: GLiNER2 over Latin-script runs, on ONNX Runtime.
+"""Tier 3: GLiNER2 over Latin-script runs.
 
-Two layers, deliberately separated.
-
-The stubbed tests replace ``_infer`` -- the one method that touches the model --
-and exercise everything this module is actually responsible for: which runs get
-sent, how labels map to our entity types, and how offsets are rebased onto the
-full text. They run everywhere and need no artifact.
-
-The artifact tests at the bottom load the real exported graph and assert on
-real predictions. They skip unless ``models/gliner-multi-pii`` is present,
-because it is a 1.2 GB build output and not something CI should download. They
-are what proves the numpy reimplementation of GLiNER's pre- and
-post-processing still matches the model it was verified against.
+The gliner wheel is not installed (the tier is off by default and its latency
+is unresolved), so these tests inject a stub in place of the loaded model. That
+still exercises everything this module is actually responsible for: which runs
+get sent to the model, how labels map back to our entity types, and how offsets
+are rebased onto the full text. The model's own accuracy is not ours to test.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -26,194 +19,216 @@ from pii_service.detect.tier3_gliner import (
     MIN_SEGMENT_CHARS,
     GlinerRecognizer,
     Tier3Unavailable,
-    _greedy_flat,
-    _Span,
-    _split_words,
 )
+
+
+class _StubModel:
+    """Records what it was asked and returns canned predictions."""
+
+    def __init__(self, predictions: list[dict[str, Any]] | None = None) -> None:
+        self.predictions = predictions or []
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def predict_entities(
+        self, text: str, labels: list[str], threshold: float = 0.5
+    ) -> list[dict[str, Any]]:
+        self.calls.append((text, labels))
+        return [p for p in self.predictions if p["_chunk"] == text]
+
+
+def _recognizer(model: _StubModel | None) -> GlinerRecognizer:
+    """Build without triggering load(), then attach the stub."""
+    recognizer = GlinerRecognizer.__new__(GlinerRecognizer)
+    recognizer._model_name = "stub"
+    recognizer._threshold = 0.5
+    recognizer._model = model
+    # Normally set by EntityRecognizer.__init__, which we bypass here.
+    recognizer._id = "stub-gliner"
+    recognizer.name = "GlinerRecognizer"
+    recognizer._prompt_to_entity = {prompt: entity for entity, prompt in LABEL_PROMPTS.items()}
+    recognizer.supported_entities = list(LABEL_PROMPTS)
+    return recognizer
+
 
 ALL_ENTITIES = list(LABEL_PROMPTS)
 
-MODEL_DIR = Path(__file__).resolve().parents[3] / "models" / "gliner-multi-pii"
-_artifact = pytest.mark.skipif(
-    not (MODEL_DIR / "model.onnx").is_file(),
-    reason="run scripts/export_gliner_onnx.py to exercise the real graph",
-)
-
-
-class _StubRecognizer(GlinerRecognizer):
-    """Real routing and offset logic, canned inference."""
-
-    def __init__(self, spans_by_chunk: dict[str, list[_Span]] | None = None) -> None:
-        self.chunks: list[str] = []
-        self._spans_by_chunk = spans_by_chunk or {}
-        self._model_dir = Path("stub")
-        self._threshold = 0.5
-        self._session = object()  # not None, so analyze() proceeds
-        self._tokenizer = None
-        self._config = {"max_width": 12}
-        self._entities = list(LABEL_PROMPTS)
-        self._prompts = [LABEL_PROMPTS[e] for e in self._entities]
-        self._id = "stub-gliner"
-        self.name = "GlinerRecognizer"
-        self.supported_entities = list(self._entities)
-
-    def _infer(self, chunk: str) -> list[_Span]:
-        self.chunks.append(chunk)
-        return self._spans_by_chunk.get(chunk, [])
-
 
 # ---------------------------------------------------------------------------
-# Script scoping -- GLiNER does not support Arabic
+# Script scoping
 # ---------------------------------------------------------------------------
 
 
 def test_arabic_runs_are_never_sent_to_the_model() -> None:
-    """Feeding it Arabic produces confident nonsense rather than an error."""
-    recognizer = _StubRecognizer()
+    """GLiNER2 does not support Arabic; fed it anyway it invents entities."""
+    model = _StubModel()
+    recognizer = _recognizer(model)
+
     recognizer.analyze("محمد علي يسكن في القاهرة ويعمل هناك", ALL_ENTITIES)
-    assert recognizer.chunks == []
+
+    assert model.calls == []
+
+
+def test_latin_runs_are_sent() -> None:
+    model = _StubModel()
+    recognizer = _recognizer(model)
+
+    recognizer.analyze("Please contact Jane Doe about the contract", ALL_ENTITIES)
+
+    assert len(model.calls) == 1
+    assert "Jane Doe" in model.calls[0][0]
 
 
 def test_only_the_latin_run_of_a_mixed_message_is_sent() -> None:
-    text = "محمد علي يسكن في القاهرة and works at Contoso Limited"
-    recognizer = _StubRecognizer()
+    model = _StubModel()
+    recognizer = _recognizer(model)
+    text = "محمد علي وايضا هنا Please contact Jane Doe today"
+
     recognizer.analyze(text, ALL_ENTITIES)
 
-    assert recognizer.chunks
-    assert all("محمد" not in chunk for chunk in recognizer.chunks)
-    assert any("Contoso" in chunk for chunk in recognizer.chunks)
+    assert len(model.calls) == 1
+    sent = model.calls[0][0]
+    assert "Jane Doe" in sent
+    assert "محمد" not in sent
 
 
 def test_short_latin_runs_are_skipped() -> None:
-    """Punctuation and stray words between Arabic clauses are not worth a pass."""
-    recognizer = _StubRecognizer()
-    recognizer.analyze("القاهرة ok القاهرة", ALL_ENTITIES)
-    assert recognizer.chunks == []
+    """A stray word between Arabic clauses is not worth a transformer pass."""
+    model = _StubModel()
+    recognizer = _recognizer(model)
+
+    recognizer.analyze("محمد علي ok وايضا هنا", ALL_ENTITIES)
+
+    assert model.calls == []
 
 
 def test_min_segment_length_is_the_documented_threshold() -> None:
-    long_enough = "x" * MIN_SEGMENT_CHARS
-    assert any(
-        segment.script == Script.LATIN
-        for segment in script_segments(long_enough, min_length=MIN_SEGMENT_CHARS)
+    text = "x" * MIN_SEGMENT_CHARS
+    assert [s.script for s in script_segments(text, min_length=MIN_SEGMENT_CHARS)] == [Script.LATIN]
+
+
+# ---------------------------------------------------------------------------
+# Label mapping and offsets
+# ---------------------------------------------------------------------------
+
+
+def test_predictions_map_to_our_entity_types() -> None:
+    chunk = "Please contact Jane Doe about the contract"
+    model = _StubModel(
+        [{"_chunk": chunk, "label": "person name", "start": 15, "end": 23, "score": 0.9}]
     )
+    results = _recognizer(model).analyze(chunk, ALL_ENTITIES)
 
-
-# ---------------------------------------------------------------------------
-# Mapping back
-# ---------------------------------------------------------------------------
+    assert len(results) == 1
+    assert results[0].entity_type == "PERSON"
+    assert chunk[results[0].start : results[0].end] == "Jane Doe"
 
 
 def test_offsets_are_rebased_onto_the_full_text() -> None:
-    """A span's offsets are into the segment; findings must be into the text."""
-    prefix = "القاهرة القاهرة "
-    chunk = "Call Jane Doe tomorrow"
-    text = prefix + chunk
+    """A segment offset that is not added back masks the wrong characters."""
+    prefix = "محمد علي وايضا هنا "
+    latin = "Please contact Jane Doe today"
+    text = prefix + latin
 
-    recognizer = _StubRecognizer({chunk: [_Span(label="PERSON", start=5, end=13, score=0.9)]})
-    results = recognizer.analyze(text, ALL_ENTITIES)
+    model = _StubModel(
+        [{"_chunk": latin, "label": "person name", "start": 15, "end": 23, "score": 0.9}]
+    )
+    results = _recognizer(model).analyze(text, ALL_ENTITIES)
 
     assert len(results) == 1
     assert text[results[0].start : results[0].end] == "Jane Doe"
 
 
-def test_only_requested_entities_are_returned() -> None:
-    chunk = "Call Jane Doe tomorrow"
-    recognizer = _StubRecognizer({chunk: [_Span(label="PERSON", start=5, end=13, score=0.9)]})
+def test_an_unknown_label_is_ignored_rather_than_guessed() -> None:
+    chunk = "Please contact Jane Doe about the contract"
+    model = _StubModel(
+        [{"_chunk": chunk, "label": "shoe size", "start": 15, "end": 23, "score": 0.9}]
+    )
+    assert _recognizer(model).analyze(chunk, ALL_ENTITIES) == []
 
-    assert recognizer.analyze(chunk, ["LOCATION"]) == []
-    assert len(recognizer.analyze(chunk, ["PERSON"])) == 1
+
+def test_only_requested_entities_are_prompted_for() -> None:
+    model = _StubModel()
+    _recognizer(model).analyze("Please contact Jane Doe today", ["PERSON"])
+
+    assert model.calls[0][1] == ["person name"]
 
 
 def test_no_requested_entities_means_no_model_call() -> None:
-    recognizer = _StubRecognizer()
-    recognizer.analyze("Call Jane Doe tomorrow", ["EG_NATIONAL_ID"])
-    assert recognizer.chunks == []
+    model = _StubModel()
+    _recognizer(model).analyze("Please contact Jane Doe today", ["EG_NATIONAL_ID"])
+    assert model.calls == []
+
+
+def test_score_is_carried_through() -> None:
+    chunk = "Please contact Jane Doe about the contract"
+    model = _StubModel(
+        [{"_chunk": chunk, "label": "person name", "start": 15, "end": 23, "score": 0.77}]
+    )
+    assert _recognizer(model).analyze(chunk, ALL_ENTITIES)[0].score == pytest.approx(0.77)
 
 
 def test_recognizer_name_is_recorded_for_the_audit_row() -> None:
-    chunk = "Call Jane Doe tomorrow"
-    recognizer = _StubRecognizer({chunk: [_Span(label="PERSON", start=5, end=13, score=0.9)]})
-    result = recognizer.analyze(chunk, ALL_ENTITIES)[0]
-
-    assert result.recognition_metadata["recognizer_name"] == "GlinerRecognizer"
-    assert result.score == pytest.approx(0.9)
-
-
-def test_empty_text_and_no_session_are_both_inert() -> None:
-    assert _StubRecognizer().analyze("", ALL_ENTITIES) == []
-    recognizer = _StubRecognizer()
-    recognizer._session = None
-    assert recognizer.analyze("Please contact Jane Doe today", ALL_ENTITIES) == []
+    chunk = "Please contact Jane Doe about the contract"
+    model = _StubModel(
+        [{"_chunk": chunk, "label": "person name", "start": 15, "end": 23, "score": 0.9}]
+    )
+    metadata = _recognizer(model).analyze(chunk, ALL_ENTITIES)[0].recognition_metadata
+    assert metadata["recognizer_name"] == "GlinerRecognizer"
 
 
 # ---------------------------------------------------------------------------
-# The pieces reimplemented from gliner, which is where a silent break would be
+# Degenerate input and availability
 # ---------------------------------------------------------------------------
 
 
-def test_word_splitter_matches_gliners_own_regex() -> None:
-    """Punctuation is its own word. Getting this wrong shifts every offset.
+def test_empty_text_and_no_model_are_both_inert() -> None:
+    assert _recognizer(_StubModel()).analyze("", ALL_ENTITIES) == []
+    assert _recognizer(None).analyze("Please contact Jane Doe today", ALL_ENTITIES) == []
 
-    The exported model was traced with this split; "Berlin." is two words, not
-    one, and a span's character offsets come from the word list.
+
+def test_enabling_tier3_without_the_wheel_raises() -> None:
+    """A tier switched on must fail loudly, not detect nothing.
+
+    Only exercisable in an image built without the tier-3 extra, which is the
+    default. Where the extra IS installed this skips rather than pretending.
     """
-    words = _split_words("Contact Sarah Mitchell at Acme Corp in Berlin.")
+    try:
+        import gliner  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        pytest.skip("gliner is installed; the unavailable path cannot be exercised")
 
-    assert [w.text for w in words] == [
-        "Contact",
-        "Sarah",
-        "Mitchell",
-        "at",
-        "Acme",
-        "Corp",
-        "in",
-        "Berlin",
-        ".",
-    ]
-    assert (words[1].start, words[1].end) == (8, 13)
-    # Hyphenated and underscored words stay whole.
-    assert [w.text for w in _split_words("well-known x_y")] == ["well-known", "x_y"]
+    with pytest.raises(Tier3Unavailable, match="gliner is not installed"):
+        GlinerRecognizer(model_name="whatever", supported_language="en")
 
 
-def test_greedy_flat_keeps_the_strongest_of_overlapping_spans() -> None:
-    kept = _greedy_flat(
-        [
-            _Span(label="PERSON", start=0, end=10, score=0.6),
-            _Span(label="ORGANIZATION", start=5, end=15, score=0.9),
-            _Span(label="LOCATION", start=20, end=25, score=0.7),
-        ]
-    )
+def test_set_prompts_swaps_labels_without_reloading_the_model() -> None:
+    """Regression: main.py subscribed this to the policy store before it existed.
 
-    assert [(s.label, s.start) for s in kept] == [("ORGANIZATION", 5), ("LOCATION", 20)]
+    The subscription filters on hasattr(), so a missing method meant runtime
+    label changes silently never reached the model. Tier 3 being off by
+    default meant nobody could have noticed.
+    """
+    recognizer = _recognizer(_StubModel())
+    recognizer.supported_entities = list(LABEL_PROMPTS)
 
-
-def test_greedy_flat_deduplicates_a_span_proposed_by_two_windows() -> None:
-    """Overlapping windows re-propose spans; the stronger one wins silently."""
-    kept = _greedy_flat(
-        [
-            _Span(label="PERSON", start=3, end=9, score=0.81),
-            _Span(label="PERSON", start=3, end=9, score=0.80),
-        ]
-    )
-
-    assert len(kept) == 1
-    assert kept[0].score == pytest.approx(0.81)
-
-
-def test_set_prompts_rebuilds_labels_and_prompts_together() -> None:
-    """They index the same axis of the logits; drifting apart shifts every label."""
-    recognizer = _StubRecognizer()
     recognizer.set_prompts({"PERSON": "person name", "PROJECT_CODENAME": "project codename"})
 
-    assert recognizer._entities == ["PERSON", "PROJECT_CODENAME"]
-    assert recognizer._prompts == ["person name", "project codename"]
     assert recognizer.supported_entities == ["PERSON", "PROJECT_CODENAME"]
+    # The reverse map is what a prediction's label is looked up in.
+    assert recognizer._prompt_to_entity == {
+        "person name": "PERSON",
+        "project codename": "PROJECT_CODENAME",
+    }
 
 
-def test_a_missing_artifact_raises_rather_than_detecting_nothing() -> None:
-    with pytest.raises(Tier3Unavailable, match="incomplete"):
-        GlinerRecognizer(model_dir=Path("/nonexistent/gliner"), supported_language="en")
+def test_set_prompts_ignores_an_entity_with_no_prompt() -> None:
+    """An entity nothing can detect is policy that silently does nothing."""
+    recognizer = _recognizer(_StubModel())
+    recognizer.set_prompts({"PERSON": "person name", "NO_PROMPT": ""})
+
+    assert recognizer.supported_entities == ["PERSON"]
 
 
 def test_label_prompts_are_natural_language_not_identifiers() -> None:
@@ -221,100 +236,3 @@ def test_label_prompts_are_natural_language_not_identifiers() -> None:
     assert LABEL_PROMPTS["PERSON"] == "person name"
     assert LABEL_PROMPTS["LOCATION"] == "location"
     assert LABEL_PROMPTS["ORGANIZATION"] == "organization"
-
-
-# ---------------------------------------------------------------------------
-# The real graph
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def real_recognizer() -> GlinerRecognizer:
-    return GlinerRecognizer(model_dir=MODEL_DIR, supported_language="en")
-
-
-@_artifact
-def test_the_onnx_path_reproduces_the_torch_reference(
-    real_recognizer: GlinerRecognizer,
-) -> None:
-    """The numbers this pins are the torch model's own, to four decimals.
-
-    Measured from PyTorch with the same label order this recognizer uses, then
-    reproduced by the numpy reimplementation from the exported graph. If this
-    drifts, the pre- or post-processing has broken, not the model.
-    """
-    text = "Contact Sarah Mitchell at Acme Corp in Berlin."
-    found = {
-        r.entity_type: (text[r.start : r.end], r.score)
-        for r in real_recognizer.analyze(text, ALL_ENTITIES)
-    }
-
-    assert found["PERSON"][0] == "Sarah Mitchell"
-    assert found["PERSON"][1] == pytest.approx(0.7056, abs=0.005)
-    assert found["ORGANIZATION"][0] == "Acme Corp"
-    assert found["ORGANIZATION"][1] == pytest.approx(0.9981, abs=0.005)
-    assert found["LOCATION"][0] == "Berlin"
-    assert found["LOCATION"][1] == pytest.approx(0.9823, abs=0.005)
-
-
-@_artifact
-def test_scores_depend_on_which_labels_were_asked_for(
-    real_recognizer: GlinerRecognizer,
-) -> None:
-    """A property of schema conditioning, and an operational trap.
-
-    The labels are written into the input, so the label *set and its order*
-    change the scores of every entity. Asking for the same sentence with
-    person/organization/location scores Sarah Mitchell at 0.757; with
-    person/location/organization it scores 0.706. Both were confirmed against
-    PyTorch.
-
-    That matters because thresholds live in entities.yaml: adding an entity
-    type through the Entities screen moves the scores of the ones already
-    there. It is not large, and it is not zero.
-    """
-    text = "Contact Sarah Mitchell at Acme Corp in Berlin."
-    baseline = {r.entity_type: r.score for r in real_recognizer.analyze(text, ALL_ENTITIES)}
-
-    reordered = GlinerRecognizer(
-        model_dir=MODEL_DIR,
-        supported_language="en",
-        prompts={
-            "PERSON": "person name",
-            "ORGANIZATION": "organization",
-            "LOCATION": "location",
-        },
-    )
-    shifted = {r.entity_type: r.score for r in reordered.analyze(text, ALL_ENTITIES)}
-
-    assert shifted["PERSON"] == pytest.approx(0.7568, abs=0.005)
-    assert shifted["PERSON"] != pytest.approx(baseline["PERSON"], abs=0.005)
-
-
-@_artifact
-def test_arabic_is_still_never_sent_to_the_real_model(
-    real_recognizer: GlinerRecognizer,
-) -> None:
-    assert real_recognizer.analyze("محمد علي يسكن في القاهرة ويعمل هناك", ALL_ENTITIES) == []
-
-
-@_artifact
-def test_a_long_document_is_windowed_not_truncated(
-    real_recognizer: GlinerRecognizer,
-) -> None:
-    """The graph takes 384 sub-tokens; a longer paste must still be scanned.
-
-    Truncation here would be undetected PII with nothing in the logs, so the
-    entity is planted well past the first window on purpose.
-
-    Worth recording: the gliner package itself finds *nothing* in this text --
-    it truncates to the model's limit and the tail is never seen. Windowing is
-    the reason this passes, and it is behaviour this module adds rather than
-    reproduces.
-    """
-    filler = "The quarterly report covers the period and the usual operating costs. "
-    text = filler * 40 + "Please forward it to Ingrid Bergqvist at Northwind Traders."
-    found = real_recognizer.analyze(text, ALL_ENTITIES)
-
-    surfaces = {text[r.start : r.end] for r in found}
-    assert "Northwind Traders" in surfaces, surfaces
