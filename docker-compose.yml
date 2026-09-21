@@ -111,6 +111,83 @@ services:
     # ports:
     #   - "127.0.0.1:8090:8090"
 
+  # -------------------------------------------------------------------------
+  # Web app: backend + UI (phases 2 and 3)
+  # -------------------------------------------------------------------------
+
+  pii-api-migrate:
+    build:
+      context: ./services/pii-api
+      secrets: [pip_ca]
+    image: pii-api:${PII_IMAGE_TAG:-0.1.0}
+    container_name: pii-api-migrate
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      PII_API_DATABASE_URL: >-
+        postgresql+psycopg://${PII_DB_USER:-pii}:${PII_DB_PASSWORD}@pii-db:5432/${PII_DB_NAME:-pii}
+      PII_API_ADMIN_INITIAL_PASSWORD: ${PII_API_ADMIN_INITIAL_PASSWORD:?set it in .env}
+      PII_API_LITELLM_MASTER_KEY: ${PII_API_LITELLM_MASTER_KEY:?set it in .env}
+    depends_on:
+      pii-db:
+        condition: service_healthy
+    networks:
+      - pii-internal
+
+  pii-api:
+    build:
+      context: ./services/pii-api
+      secrets: [pip_ca]
+    image: pii-api:${PII_IMAGE_TAG:-0.1.0}
+    container_name: pii-api
+    restart: unless-stopped
+    environment:
+      PII_API_DATABASE_URL: >-
+        postgresql+psycopg://${PII_DB_USER:-pii}:${PII_DB_PASSWORD}@pii-db:5432/${PII_DB_NAME:-pii}
+      PII_API_PII_SERVICE_URL: http://pii-service:8090
+      PII_API_LITELLM_URL: ${PII_API_LITELLM_URL:-http://litellm:4000}
+      # Mints one virtual key per app user, which is what puts a real user id
+      # on every audit row the chat produces.
+      PII_API_LITELLM_MASTER_KEY: ${PII_API_LITELLM_MASTER_KEY:?set it in .env}
+      PII_API_CHAT_MODEL: ${PII_API_CHAT_MODEL:-local-llama}
+      # Bootstraps the first admin, flagged must_change_password. The console
+      # refuses to serve until that password is rotated.
+      PII_API_ADMIN_EMAIL: ${PII_API_ADMIN_EMAIL:-admin@example.com}
+      PII_API_ADMIN_INITIAL_PASSWORD: ${PII_API_ADMIN_INITIAL_PASSWORD:?set it in .env}
+      # Local http development only. Leave true anywhere a browser reaches
+      # this over anything but localhost.
+      PII_API_COOKIE_SECURE: ${PII_API_COOKIE_SECURE:-true}
+      PII_API_LOG_LEVEL: ${PII_LOG_LEVEL:-INFO}
+    depends_on:
+      pii-db:
+        condition: service_healthy
+      pii-api-migrate:
+        condition: service_completed_successfully
+      pii-service:
+        condition: service_healthy
+    networks:
+      - pii-internal
+      - litellm
+    expose:
+      - "8080"
+
+  pii-web:
+    build:
+      context: ./services/pii-web
+    image: pii-web:${PII_IMAGE_TAG:-0.1.0}
+    container_name: pii-web
+    restart: unless-stopped
+    depends_on:
+      pii-api:
+        condition: service_started
+    networks:
+      - pii-internal
+    # The one published port of the whole stack. nginx serves the SPA and
+    # proxies /api to pii-api, so the app is same-origin and the session
+    # cookie needs no CORS relaxation.
+    ports:
+      - "${PII_WEB_BIND:-127.0.0.1}:${PII_WEB_PORT:-8099}:8081"
+
 # Build-time only. Set PIP_CA_BUNDLE when an internal TLS-intercepting proxy
 # sits in front of PyPI; the default is an empty file, which the Dockerfile
 # treats as "no custom CA".

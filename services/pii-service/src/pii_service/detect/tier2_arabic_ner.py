@@ -28,6 +28,7 @@ startup rather than silently running with reduced coverage.
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -196,12 +197,84 @@ class ArabicNerRecognizer(EntityRecognizer):
         scores: Any = _softmax(logits)
         predictions = scores.argmax(axis=-1)
 
-        return _decode_bio(
-            labels=[self._labels[int(p)] for p in predictions],
-            scores=[float(scores[i, int(p)]) for i, p in enumerate(predictions)],
-            offsets=encoding.offsets,
-            score_floor=self._score_floor,
+        return _tidy_spans(
+            _decode_bio(
+                labels=[self._labels[int(p)] for p in predictions],
+                scores=[float(scores[i, int(p)]) for i, p in enumerate(predictions)],
+                offsets=encoding.offsets,
+                score_floor=self._score_floor,
+            ),
+            chunk,
         )
+
+
+def _is_word_char(char: str) -> bool:
+    """A character that must not be split away from the rest of its word.
+
+    Letters, plus the combining marks that sit on them -- leaving a stray
+    fatha behind a placeholder is the same bug as leaving a letter.
+
+    Digits are deliberately excluded: "عمارة 12" must not pull the building
+    number into a name span.
+    """
+    return char.isalpha() or unicodedata.category(char) == "Mn"
+
+
+def _tidy_spans(entities: list[_Entity], text: str) -> list[_Entity]:
+    """Snap span edges out to word boundaries, then merge what now touches.
+
+    The model is a WordPiece tokenizer over Arabic, so one orthographic word
+    is usually several tokens and the BIO tags over them are not always
+    consistent. Two failure modes come out of that, both observed on the
+    sentence "أنا رايح لمنى في المعادي بكرة":
+
+    * the final sub-word of المعادي tagged O, so the span stopped a
+      character short and masking left a ي stranded after the placeholder --
+      a fragment of the matched value surviving in what we forward;
+    * لمنى tagged B-LOC twice rather than B-LOC I-LOC, so the decoder
+      emitted two spans and the output read <AR_LOCATION><AR_LOCATION>.
+
+    The evaluation harness could not catch either one. It scores *coverage* --
+    the share of gold spans overlapped by any prediction -- so a span truncated
+    by one character still counts as a pass. That is the right metric for
+    deciding whether a model finds things; it says nothing about whether the
+    masking built on top of it is clean.
+
+    Merging is deliberately limited to spans that touch or overlap **after**
+    snapping. Merging across whitespace would join two adjacent but
+    distinct places into a single span, which over-masks.
+    """
+    if not entities:
+        return []
+
+    snapped: list[_Entity] = []
+    for entity in entities:
+        start, end = entity.start, entity.end
+        while start > 0 and _is_word_char(text[start - 1]):
+            start -= 1
+        while end < len(text) and _is_word_char(text[end]):
+            end += 1
+        snapped.append(_Entity(label=entity.label, start=start, end=end, score=entity.score))
+
+    snapped.sort(key=lambda entity: (entity.start, entity.end))
+
+    merged: list[_Entity] = [snapped[0]]
+    for entity in snapped[1:]:
+        previous = merged[-1]
+        # Same label and touching or overlapping. Different labels over the
+        # same characters are left alone: router._deconflict resolves those by
+        # length and score, and it does it for every recognizer at once.
+        if entity.label == previous.label and entity.start <= previous.end:
+            merged[-1] = _Entity(
+                label=previous.label,
+                start=previous.start,
+                end=max(previous.end, entity.end),
+                score=min(previous.score, entity.score),
+            )
+        else:
+            merged.append(entity)
+
+    return merged
 
 
 def _softmax(logits: Any) -> Any:

@@ -173,6 +173,52 @@ async def test_texts_and_tool_calls_are_sent_in_one_call_and_mapped_back_by_posi
     assert tool_calls[0]["function"]["arguments"] == "masked-args"
 
 
+@respx.mock
+async def test_fields_label_each_slot_as_content_or_tool_call_args() -> None:
+    """The audit row's `field` column comes from here and nowhere else.
+
+    pii-service reads `texts` and `fields` positionally, so this is the one
+    thing that can make a drill-down say "tool call arguments" rather than
+    leaving the column null.
+    """
+    route = respx.post(f"{SERVICE}/analyze").mock(return_value=_service_reply(["a", "b", "c"]))
+
+    inputs: dict[str, Any] = {
+        "texts": ["one", "two"],
+        "tool_calls": [{"function": {"name": "f", "arguments": "three"}}],
+    }
+    await _guardrail().apply_guardrail(inputs, _request_data(), "request")
+
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["texts"] == ["one", "two", "three"]
+    assert sent["fields"] == ["content", "content", "tool_call.args"]
+
+
+@respx.mock
+async def test_fields_stay_parallel_to_the_texts_actually_sent() -> None:
+    """Cached texts are dropped from the request; `fields` must drop with them.
+
+    If the two lists ever drift, every audit row after the first cache hit is
+    labelled with another slot's field -- silently, and in the audit trail.
+    """
+    guardrail = _guardrail()
+
+    first = respx.post(f"{SERVICE}/analyze").mock(return_value=_service_reply(["cached-masked"]))
+    await guardrail.apply_guardrail({"texts": ["cached"]}, _request_data(), "request")
+    assert first.called
+
+    route = respx.post(f"{SERVICE}/analyze").mock(return_value=_service_reply(["args-masked"]))
+    inputs: dict[str, Any] = {
+        "texts": ["cached"],
+        "tool_calls": [{"function": {"name": "f", "arguments": "fresh-args"}}],
+    }
+    await guardrail.apply_guardrail(inputs, _request_data(), "request")
+
+    sent = json.loads(route.calls[-1].request.content)
+    assert sent["texts"] == ["fresh-args"]
+    assert sent["fields"] == ["tool_call.args"]
+
+
 # ---------------------------------------------------------------------------
 # Blocking
 # ---------------------------------------------------------------------------
@@ -272,7 +318,11 @@ async def test_request_data_is_never_sent_to_the_service() -> None:
 
     body = route.calls[0].request.content.decode()
     assert "sk-super-secret" not in body
-    assert set(json.loads(body)) == {"texts", "request_id", "identity", "model"}
+    # An allow-list, not a deny-list: a new key has to be added here
+    # deliberately, which is the review step this test exists to force.
+    # `fields` is safe by construction -- its only values are the two
+    # literals "content" and "tool_call.args".
+    assert set(json.loads(body)) == {"texts", "fields", "request_id", "identity", "model"}
 
 
 @respx.mock

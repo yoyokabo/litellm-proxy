@@ -136,6 +136,61 @@ jobs:
       - name: Contract tests
         run: .venv/bin/python -m pytest -q
 
+  api:
+    name: pii-api (lint, types, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/pii-api
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e ".[dev]"
+
+      - name: Lint
+        run: |
+          .venv/bin/python -m ruff check src tests
+          .venv/bin/python -m ruff format --check src tests
+
+      - name: Types
+        run: .venv/bin/python -m mypy
+
+      # The load-bearing test here is that the original text never reaches the
+      # model. Everything else about the chat could work and that could still
+      # be broken, and the product would be a PII leak with a chip above it.
+      - name: Tests
+        env:
+          PII_API_ADMIN_INITIAL_PASSWORD: bootstrap-password-1
+          PII_API_LITELLM_MASTER_KEY: sk-test-master
+        run: .venv/bin/python -m pytest -q
+
+  web:
+    name: pii-web (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/pii-web
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install
+        run: npm install
+
+      # tsc runs in strict mode, so this is the type gate as well as the build.
+      - name: Typecheck and build
+        run: npm run build
+
   compose:
     name: docker compose builds and serves
     runs-on: ubuntu-latest
@@ -148,6 +203,12 @@ jobs:
           cp .env.example .env
           sed -i "s|^PII_AUDIT_PEPPER=.*|PII_AUDIT_PEPPER=$(openssl rand -hex 32)|" .env
           sed -i "s|^PII_DB_PASSWORD=.*|PII_DB_PASSWORD=$(openssl rand -hex 24)|" .env
+          # pii-api refuses to start on the placeholder admin password, which
+          # is the point of the check -- so CI generates one like a deployment
+          # would. There is no LiteLLM here, so the master key is a stand-in;
+          # the compose job never sends a completion.
+          sed -i "s|^PII_API_ADMIN_INITIAL_PASSWORD=.*|PII_API_ADMIN_INITIAL_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')|" .env
+          sed -i "s|^PII_API_LITELLM_MASTER_KEY=.*|PII_API_LITELLM_MASTER_KEY=sk-ci-not-used|" .env
 
       - name: Validate the compose file
         run: docker compose config --quiet
@@ -198,6 +259,22 @@ jobs:
             "SELECT entity_type, user_id, preview FROM pii_events" | tee /tmp/rows
           grep -q 'EG_NATIONAL_ID|ci|' /tmp/rows
           ! grep -q '28503122148219' /tmp/rows
+
+      # The two migration chains share pii-db and must not collide: each keeps
+      # its own version table, and a regression here shows up as one service
+      # refusing to start because the other's revision id is unknown to it.
+      - name: Both migration chains reached head
+        run: |
+          docker compose exec -T pii-db psql -U pii -d pii -tAc \
+            "SELECT version_num FROM alembic_version" | grep -q 0001_initial
+          docker compose exec -T pii-db psql -U pii -d pii -tAc \
+            "SELECT version_num FROM alembic_version_api" | grep -q 0001_app_tables
+
+      - name: The web app serves and its API is reachable
+        run: |
+          curl -fsS -o /dev/null http://127.0.0.1:8099/
+          # Unauthenticated admin access must be refused, not merely unlinked.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8099/api/admin/events)" = "401"
 
       - name: Logs on failure
         if: failure()

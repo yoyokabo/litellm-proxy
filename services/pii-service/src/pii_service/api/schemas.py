@@ -21,8 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field
 __all__ = [
     "AnalyzeRequest",
     "AnalyzeResponse",
+    "EntityPolicyView",
     "Finding",
     "HealthResponse",
+    "PolicyResponse",
     "RequestIdentity",
 ]
 
@@ -130,3 +132,35 @@ class HealthResponse(BaseModel):
     database_reachable: bool
     audit: dict[str, object]
     tiers: dict[str, bool]
+
+
+class EntityPolicyView(BaseModel):
+    """One entity's policy, as the admin UI needs to render it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_type: str
+    category: str
+    action: str
+    tier: int | None = None
+    score_threshold: float
+    placeholder: str
+
+
+class PolicyResponse(BaseModel):
+    """The entity policy, published so callers do not re-implement it.
+
+    The admin timeline stacks events by *category*, and ``pii_events`` stores
+    only ``entity_type``. Something has to hold the mapping between them, and
+    the only correct place is here: this service already loads and validates
+    entities.yaml at startup, so a second copy in the web backend would be a
+    copy that drifts the first time someone adds an entity.
+
+    Contains no PII and no configuration secrets -- entity names, categories,
+    actions and thresholds are exactly what the admin UI displays.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int
+    entities: list[EntityPolicyView]

@@ -133,6 +133,29 @@ def test_the_image_never_installs_pytorch_or_transformers(
         assert forbidden not in lowered, f"{forbidden} must not appear in the Dockerfile"
 
 
+def test_the_image_installs_the_ner_extra(dockerfile_instructions: str) -> None:
+    """Tier 2 must be switchable at runtime, not only at build time.
+
+    docker-compose.yml exposes PII_ENABLE_TIER2_ARABIC_NER as an environment
+    variable, which promises an operator can turn tier 2 on by editing .env and
+    restarting. If the image were built without the [ner] extra that promise
+    fails at startup with ModuleNotFoundError -- on the air-gapped host, where
+    nothing can be pip installed to fix it.
+
+    Paired with the test above: onnxruntime and tokenizers, yes; torch and
+    transformers, never.
+    """
+    assert '".[ner]"' in dockerfile_instructions, (
+        "the runtime image must install the [ner] extra, or "
+        "PII_ENABLE_TIER2_ARABIC_NER cannot be honoured at runtime"
+    )
+
+
+def test_the_image_does_not_install_the_gliner_extra(dockerfile_instructions: str) -> None:
+    """Tier 3 pulls in torch, and is off pending a latency decision (brief §4)."""
+    assert "gliner" not in dockerfile_instructions.lower()
+
+
 def test_the_build_is_multi_stage(dockerfile: str) -> None:
     assert len(re.findall(r"^FROM ", dockerfile, re.MULTILINE)) >= 2
 

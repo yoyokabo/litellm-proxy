@@ -246,6 +246,14 @@ def _available_tiers(policy: object) -> list[tuple[str, PiiRouter]]:
         # report tier 2/3 numbers on a developer machine with no .env.
         settings = Settings(audit_pepper="benchmark-only-not-a-real-pepper")  # type: ignore[arg-type]
 
+    # Pin the policy directory the same way the analyzer above does. Settings
+    # defaults it to a *relative* "config", which resolves only when the cwd
+    # happens to be services/pii-service -- so without this, running the
+    # benchmark from the repository root (as the README says to) reports
+    # "tier 2 not measured" and looks like a missing artifact rather than a
+    # wrong working directory.
+    settings = settings.model_copy(update={"config_dir": CONFIG_DIR})
+
     for label, flag, builder in (
         ("tier 1 + 2 (arabic NER)", settings.enable_tier2_arabic_ner, _tier2),
         ("tier 1 + 3 (GLiNER2)", settings.enable_tier3_gliner, _tier3),
