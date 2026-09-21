@@ -82,6 +82,7 @@ services:
       PII_ENABLE_TIER2_ARABIC_NER: ${PII_ENABLE_TIER2_ARABIC_NER:-false}
       PII_ENABLE_TIER3_GLINER: ${PII_ENABLE_TIER3_GLINER:-false}
       PII_TIER2_MODEL_DIR: ${PII_TIER2_MODEL_DIR:-/models/arabic-ner}
+      PII_TIER3_MODEL_DIR: ${PII_TIER3_MODEL_DIR:-/models/gliner-multi-pii}
       PII_DETECTION_CACHE_SIZE: ${PII_DETECTION_CACHE_SIZE:-2048}
       # Empty disables the /admin routes. See .env.example.
       PII_ADMIN_TOKEN: ${PII_ADMIN_TOKEN:-}

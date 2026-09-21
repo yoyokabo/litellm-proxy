@@ -276,7 +276,7 @@ the detector.
 |---|---|---|
 | 1 | Deterministic recognizers: Egyptian national ID, mobile, IBAN, tax ID, passport, plus email and card | **On**, always |
 | 2 | Arabic NER (ONNX int8) + Egyptian address gazetteer | **Measured and chosen**: `camelbert-msa-int8`. Off by default — set the two variables below |
-| 3 | GLiNER2 for Latin script | Written, **off** — needs a latency decision |
+| 3 | GLiNER2 for Latin script (ONNX, no PyTorch) | **Measured**: p95 74 ms on Latin chat text. Off by default — needs an artifact and a load test |
 
 ### Tier 1 scoring
 
@@ -453,20 +453,81 @@ nothing. And a pasted Arabic *document* costs over half a second on `pre_call`,
 which is the number to design around if this gateway sees long pastes; chat-
 sized messages at ~33 ms p95 are not the problem.
 
-### Tier 3 latency
+### Tier 3: GLiNER2 on ONNX, no PyTorch
 
-Off by default, and that is a measured decision rather than a precaution. The
-vendor reports 50–200 ms/document on 8–16 core CPU; an independent benchmark
-measured ~2.3 s per chat-sized message on an M1. That is more than an order of
-magnitude, and the guardrail runs `pre_call`, so whatever it costs is added to
-every request through the gateway.
+Tier 3 detects `PERSON`, `LOCATION` and `ORGANIZATION` in Latin-script runs,
+and it runs on `onnxruntime` — the same two wheels tier 2 uses. There is no
+`gliner` extra any more, and the runtime image still contains neither `torch`
+nor `transformers`.
+
+That is not how the `gliner` package works. It declares torch **and**
+transformers as *core* dependencies, and its own ONNX adapter imports torch
+anyway, so `pip install gliner` would put a multi-gigabyte training stack in a
+CPU inference image to run a graph onnxruntime can execute alone. So:
 
 ```bash
-python scripts/benchmark.py --iterations 500
+# Build-time only, on a machine with internet.
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "gliner>=0.2.29" onnx onnxruntime tiktoken protobuf sentencepiece
+pip install -e "services/pii-service[ner]"
+
+python scripts/export_gliner_onnx.py        # -> models/gliner-multi-pii/
 ```
 
-Run that on hardware resembling production before anyone designs around a
-number.
+[`detect/tier3_gliner.py`](services/pii-service/src/pii_service/detect/tier3_gliner.py)
+reimplements GLiNER's pre- and post-processing in numpy — about eighty lines:
+the word splitter (`\w+(?:[-_]\w+)*|\S`, offsets preserved), the prompt layout
+(`[CLS] <<ENT>> label … <<SEP>> words … [SEP]` with a word-index mask), the
+span grid, and greedy flat decoding.
+
+**It was verified against the torch model, not assumed.** Same spans, scores
+matching to four decimals. `tests/test_tier3.py` pins those numbers and skips
+unless the artifact is present.
+
+#### Measured latency
+
+The brief called the vendor's 50–200 ms/document and an independent ~2.3 s
+irreconcilable and said to measure. On an i7-10700K, one thread, fp32:
+
+| Corpus | tier 1 | tier 1 + 3 |
+|---|---|---|
+| Latin, chat-sized (51 chars) | p50 0.30 ms | p50 67 ms / **p95 74 ms** |
+| Mixed script | p50 0.31 ms | p50 59 ms / p95 80 ms |
+| Arabic, chat-sized | p50 0.28 ms | p50 0.35 ms — no Latin to scan |
+| Arabic document (1.7 kB) | p50 4.6 ms | p50 164 ms |
+
+So the vendor's range is the honest one on this hardware, not the 2.3 s. An
+English-heavy workload pays ~74 ms p95 on every request; an Arabic-only one
+pays nothing, because the router never hands tier 3 a non-Latin run.
+
+Still off by default. Re-measure under concurrent load before enabling it on a
+gateway serving 100+ engineers — these numbers are single-threaded and
+sequential.
+
+#### int8 is not usable for this model
+
+Dynamic quantization destroys it. mdeberta-v3's disentangled attention does not
+survive: of three obvious entities, the int8 graph found **one**, at 0.68
+instead of 0.998. `reduce_range=True` — the fix for tier 2's AVX2 saturation —
+moved it from 0.62 to 0.68 and recovered neither of the other two, so this is a
+different failure from that one.
+
+The export's smoke check **fails** rather than warning, so a degraded artifact
+cannot be written successfully. `--quantize` is kept only so the finding can be
+reproduced. fp32 is 1.2 GB.
+
+#### Two properties worth knowing before you tune thresholds
+
+**Scores depend on the label set and its order.** The labels are written into
+the input, so asking for person/organization/location scores a name at 0.757
+while person/location/organization scores the same name at 0.706. Both
+confirmed against PyTorch. Adding an entity type through the Entities screen
+moves the scores of the ones already there — not by much, and not by zero.
+
+**Long text is windowed, not truncated.** The graph takes 384 sub-tokens. Input
+is chunked into 160-word windows overlapping by `max_width`, so every candidate
+span sits wholly inside at least one window. The `gliner` package itself finds
+*nothing* in a 2.8 kB document — it truncates and never sees the tail.
 
 ---
 
@@ -755,7 +816,8 @@ path.
 └── scripts/
     ├── verify_end_to_end.py    # done-criterion 3, as a runnable check
     ├── benchmark.py            # p50/p95 per tier on CPU
-    ├── export_camelbert_onnx.py# build-time ONNX export (the only place torch is allowed)
+    ├── export_camelbert_onnx.py# build-time ONNX export for tier 2
+    ├── export_gliner_onnx.py   # build-time ONNX export for tier 3
     ├── eval_arabic_ner.py      # variant comparison, coverage-first
     └── seed_demo_events.py
 ```

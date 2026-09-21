@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     languages: Annotated[tuple[str, ...], NoDecode] = ("en", "ar")
     enable_tier2_arabic_ner: bool = False
     enable_tier3_gliner: bool = False
+    # Directory holding model.onnx, tokenizer.json and gliner.json, produced by
+    # scripts/export_gliner_onnx.py. Enabling tier 3 without one raises at
+    # startup rather than silently running with reduced coverage.
+    tier3_model_dir: Path | None = None
     tier2_model_dir: Path | None = None
     detection_cache_size: Annotated[int, Field(ge=0)] = 2048
 

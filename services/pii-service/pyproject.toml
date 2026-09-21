@@ -32,11 +32,12 @@ ner = [
     "tokenizers>=0.20",
     "numpy>=1.26",
 ]
-# Tier 3: GLiNER2 for Latin script. Heavier, and off by default until
-# scripts/benchmark.py says the latency is acceptable on the target CPU.
-gliner = [
-    "gliner>=0.2.13",
-]
+# NOTE: there is no 'gliner' extra any more. Tier 3 used to install the gliner
+# package, which declares torch and transformers as core dependencies -- a
+# multi-gigabyte training stack in a CPU inference image, to run a graph that
+# onnxruntime executes alone. The model is now exported to ONNX at build time
+# by scripts/export_gliner_onnx.py and tier 3 runs on the [ner] extra, exactly
+# like tier 2. See detect/tier3_gliner.py.
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
