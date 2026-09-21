@@ -124,10 +124,8 @@ class GlinerRecognizer(EntityRecognizer):
                 "Install the 'gliner' extra: pip install 'pii-service[gliner]'."
             ) from exc
 
-        # local_files_only: an air-gapped host must fail with a clear error
-        # rather than hanging on a HuggingFace fetch that cannot succeed.
-        # Accepts a repo id or a local directory. Air-gapped hosts pass a
-        # directory; local_files_only turns a missing artifact into a clear
+        # Accepts a repo id or a local directory; air-gapped hosts pass a
+        # directory. local_files_only turns a missing artifact into a clear
         # error rather than a hang on a fetch that cannot succeed.
         self._model = GLiNER.from_pretrained(str(self._model_name), local_files_only=True)
         logger.info("tier3.loaded", model=self._model_name)
