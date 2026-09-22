@@ -118,6 +118,16 @@ COPY --chown=pii:pii alembic.ini ./alembic.ini
 # user or the audit trail is lost precisely when the database is already down.
 RUN mkdir -p /var/lib/pii-service/wal && chown -R pii:pii /var/lib/pii-service
 
+# /models must exist in the image, owned by the service user, even though the
+# service only ever reads it.
+#
+# Docker seeds an empty named volume from the image path it is mounted at,
+# ownership included -- and creates it root-owned when that path does not
+# exist. The root compose file bind-mounts ./models read-only so this never
+# mattered there, but a deployment that DOWNLOADS its artifacts writes into a
+# named volume as this user, and would get EACCES on a fresh machine.
+RUN mkdir -p /models && chown pii:pii /models
+
 USER pii
 EXPOSE 8090
 

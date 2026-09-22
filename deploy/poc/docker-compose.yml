@@ -80,12 +80,12 @@ services:
     command: ["python", "-m", "pii_service.bootstrap", "--output", "/models"]
     environment:
       PII_AUDIT_PEPPER: ${PII_AUDIT_PEPPER:?run ./up.sh}
-      # Where HuggingFace caches its downloads. A named volume, so a re-pull
-      # after `down` does not re-fetch several gigabytes.
-      HF_HOME: /hf-cache
+      # HuggingFace's download cache, kept inside the models volume so there
+      # is one directory whose ownership has to be right, and so `down`
+      # without -v does not throw away several gigabytes.
+      HF_HOME: /models/.hf-cache
     volumes:
       - pii-models:/models
-      - hf-cache:/hf-cache
 
   pii-migrate:
     build: *pii-build
@@ -241,5 +241,4 @@ volumes:
   litellm-db-data:
   pii-wal:
   pii-models:
-  hf-cache:
   ollama:
