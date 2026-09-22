@@ -26,6 +26,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type {
+  EntityAction,
   Category,
   EntityPolicyView,
   EntityUpsert,
@@ -53,6 +54,7 @@ interface Draft {
   entity_type: string;
   gliner_prompt: string;
   category: Category;
+  action: EntityAction;
   placeholder: string;
   strategy: ReplacementStrategyName;
   value: string;
@@ -60,11 +62,31 @@ interface Draft {
   note: string;
 }
 
+/** The three things policy can do with a detected span.
+ *
+ * Named for what an operator wants, not for the enum: "detect only" is the
+ * answer to "turn masking off for this one", and it is ALLOW on the wire.
+ * Kept as three choices rather than a switch because BLOCK is a real third
+ * state, and a two-way toggle would silently throw it away.
+ */
+const ACTION_OPTIONS: { value: EntityAction; label: string }[] = [
+  { value: "MASK", label: "Mask it" },
+  { value: "ALLOW", label: "Detect only — do not mask" },
+  { value: "BLOCK", label: "Block the request" },
+];
+
+const ACTION_HINT: Record<EntityAction, string> = {
+  MASK: "The span is replaced before the text reaches the model.",
+  ALLOW: "Detected and audited, but the text is passed through untouched.",
+  BLOCK: "The request is refused. The caller is told the type and count, never the value.",
+};
+
 function draftFrom(entity: EntityView): Draft {
   return {
     entity_type: entity.entity_type,
     gliner_prompt: entity.gliner_prompt ?? "",
     category: entity.category,
+    action: (entity.action as EntityAction) ?? "MASK",
     placeholder: entity.placeholder,
     strategy: entity.replacement_strategy,
     // The server does not send back what a constant or a pool was set to --
@@ -81,6 +103,7 @@ const BLANK: Draft = {
   entity_type: "",
   gliner_prompt: "",
   category: "other",
+  action: "MASK",
   placeholder: "",
   strategy: "placeholder",
   value: "",
@@ -102,6 +125,7 @@ function toPayload(draft: Draft, { isNew }: { isNew: boolean }): EntityUpsert {
       pool,
     },
   };
+  payload.action = draft.action;
   if (draft.gliner_prompt.trim()) payload.gliner_prompt = draft.gliner_prompt.trim();
   if (draft.placeholder.trim()) payload.placeholder = draft.placeholder.trim();
   if (draft.note.trim()) payload.note = draft.note.trim();
@@ -482,7 +506,37 @@ function EntityPanel({
           </Field>
         )}
 
-        <ReplacementEditor draft={draft} onChange={setDraft} strategies={strategies} />
+        <Field
+          label="When this is found"
+          hint={ACTION_HINT[draft.action]}
+        >
+          <Select
+            value={draft.action}
+            onChange={(action) => setDraft({ ...draft, action })}
+            options={ACTION_OPTIONS}
+          />
+        </Field>
+
+        {draft.action !== "MASK" && (
+          <Card className="border-masked px-3 py-2 text-[12px]">
+            {draft.action === "ALLOW" ? (
+              <>
+                <strong>Masking is off for this entity.</strong> It is still detected and still
+                written to the audit log, so you keep the record of who sent what — the text
+                simply reaches the model unchanged.
+              </>
+            ) : (
+              <>
+                <strong>Requests carrying this are refused.</strong> The caller gets entity types
+                and counts, never the value. Nothing reaches the model.
+              </>
+            )}
+          </Card>
+        )}
+
+        {draft.action === "MASK" && (
+          <ReplacementEditor draft={draft} onChange={setDraft} strategies={strategies} />
+        )}
 
         <Field label="Note" hint="Why this was changed. Shown to the next operator.">
           <Input
@@ -573,7 +627,37 @@ function NewLabelPanel({
           />
         </Field>
 
-        <ReplacementEditor draft={draft} onChange={setDraft} strategies={strategies} />
+        <Field
+          label="When this is found"
+          hint={ACTION_HINT[draft.action]}
+        >
+          <Select
+            value={draft.action}
+            onChange={(action) => setDraft({ ...draft, action })}
+            options={ACTION_OPTIONS}
+          />
+        </Field>
+
+        {draft.action !== "MASK" && (
+          <Card className="border-masked px-3 py-2 text-[12px]">
+            {draft.action === "ALLOW" ? (
+              <>
+                <strong>Masking is off for this entity.</strong> It is still detected and still
+                written to the audit log, so you keep the record of who sent what — the text
+                simply reaches the model unchanged.
+              </>
+            ) : (
+              <>
+                <strong>Requests carrying this are refused.</strong> The caller gets entity types
+                and counts, never the value. Nothing reaches the model.
+              </>
+            )}
+          </Card>
+        )}
+
+        {draft.action === "MASK" && (
+          <ReplacementEditor draft={draft} onChange={setDraft} strategies={strategies} />
+        )}
 
         <Field label="Note">
           <Input

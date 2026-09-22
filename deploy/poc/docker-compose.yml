@@ -1,0 +1,245 @@
+# Self-contained proof of concept: everything, one command.
+#
+# Unlike the root compose file -- which attaches to a LiteLLM deployment it does
+# not own -- this brings up the whole thing: the PII services, a LiteLLM proxy,
+# and Ollama serving a model. Nothing external is assumed except internet.
+#
+#   ./up.sh
+#
+# All three detection tiers are on. Model artifacts are NOT baked into the
+# image: pii-models downloads and prepares them on first start into a shared
+# volume, and skips whatever is already there on every start after that.
+#
+# This is a demo host, not a hardened one. What it does differently from a real
+# deployment is listed in README.md under "What this is not".
+
+name: pii-poc
+
+x-pii-build: &pii-build
+  context: ../../services/pii-service
+  secrets: [pip_ca]
+  # Build over the host's network. Some workstations hand containers a DNS
+  # server that does not answer -- a router address, a split-horizon resolver
+  # -- and the build then fails at the first package fetch with a name
+  # resolution error. Using the host's stack sidesteps that, and changes
+  # nothing on a machine where the default already works.
+  network: host
+  args:
+    # Tier 3 brings torch and transformers; the bootstrap adds the conversion
+    # toolchain tier 2's artifact needs. Both are on here because the demo runs
+    # every tier. A tier-1/2 site builds with neither and gets a 570 MB image.
+    PII_WITH_TIER3: "true"
+    PII_WITH_BOOTSTRAP: "true"
+
+services:
+  # -- storage ---------------------------------------------------------------
+
+  pii-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pii
+      POSTGRES_PASSWORD: ${PII_DB_PASSWORD:?run ./up.sh}
+      POSTGRES_DB: pii
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - pii-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pii -d pii"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    expose: ["5432"]
+
+  litellm-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${PII_DB_PASSWORD}
+      POSTGRES_DB: litellm
+    volumes:
+      - litellm-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    expose: ["5432"]
+
+  # -- one-shot preparation --------------------------------------------------
+
+  pii-models:
+    build: *pii-build
+    image: pii-service:${PII_IMAGE_TAG:-poc}
+    restart: "no"
+    # Downloads and prepares tier 2's and tier 3's artifacts. Idempotent: it
+    # skips what is already in the volume, so only the first start is slow.
+    command: ["python", "-m", "pii_service.bootstrap", "--output", "/models"]
+    environment:
+      PII_AUDIT_PEPPER: ${PII_AUDIT_PEPPER:?run ./up.sh}
+      # Where HuggingFace caches its downloads. A named volume, so a re-pull
+      # after `down` does not re-fetch several gigabytes.
+      HF_HOME: /hf-cache
+    volumes:
+      - pii-models:/models
+      - hf-cache:/hf-cache
+
+  pii-migrate:
+    build: *pii-build
+    image: pii-service:${PII_IMAGE_TAG:-poc}
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      PII_DATABASE_URL: postgresql+psycopg://pii:${PII_DB_PASSWORD}@pii-db:5432/pii
+      PII_AUDIT_PEPPER: ${PII_AUDIT_PEPPER}
+    depends_on:
+      pii-db: {condition: service_healthy}
+
+  pii-api-migrate:
+    build:
+      context: ../../services/pii-api
+      secrets: [pip_ca]
+      network: host
+    image: pii-api:${PII_IMAGE_TAG:-poc}
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      PII_API_DATABASE_URL: postgresql+psycopg://pii:${PII_DB_PASSWORD}@pii-db:5432/pii
+      PII_API_ADMIN_INITIAL_PASSWORD: ${PII_API_ADMIN_INITIAL_PASSWORD:?run ./up.sh}
+      PII_API_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run ./up.sh}
+    depends_on:
+      pii-db: {condition: service_healthy}
+
+  # -- the model -------------------------------------------------------------
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    expose: ["11434"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    # Pulls into the shared volume, then exits. Skips a model already there.
+    command: ['ollama pull "${POC_OLLAMA_MODEL:-llama3.1}"']
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama: {condition: service_healthy}
+
+  # -- the services ----------------------------------------------------------
+
+  pii-service:
+    build: *pii-build
+    image: pii-service:${PII_IMAGE_TAG:-poc}
+    restart: unless-stopped
+    environment:
+      PII_DATABASE_URL: postgresql+psycopg://pii:${PII_DB_PASSWORD}@pii-db:5432/pii
+      PII_AUDIT_PEPPER: ${PII_AUDIT_PEPPER}
+      PII_ADMIN_TOKEN: ${PII_ADMIN_TOKEN:?run ./up.sh}
+      PII_LOG_LEVEL: ${PII_LOG_LEVEL:-INFO}
+      PII_ENABLE_TIER2_ARABIC_NER: ${PII_ENABLE_TIER2_ARABIC_NER:-true}
+      PII_ENABLE_TIER3_GLINER: ${PII_ENABLE_TIER3_GLINER:-true}
+      PII_TIER2_MODEL_DIR: ${PII_TIER2_MODEL_DIR:-/models/camelbert-msa-int8}
+      PII_TIER3_MODEL_DIR: ${PII_TIER3_MODEL_DIR:-/models/gliner-multi-pii}
+    volumes:
+      - ../../services/pii-service/config:/app/config:ro
+      - pii-wal:/var/lib/pii-service/wal
+      - pii-models:/models:ro
+    depends_on:
+      pii-db: {condition: service_healthy}
+      pii-migrate: {condition: service_completed_successfully}
+      # Enabling a tier without its artifact is a startup error by design, so
+      # the service must not start before the download has finished.
+      pii-models: {condition: service_completed_successfully}
+    expose: ["8090"]
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.101.0
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ../../services/litellm-pii-guardrail/pii_guardrail.py:/app/pii_guardrail.py:ro
+    environment:
+      PYTHONPATH: /app
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?run ./up.sh}
+      DATABASE_URL: postgresql://litellm:${PII_DB_PASSWORD}@litellm-db:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+      POC_OLLAMA_MODEL: ${POC_OLLAMA_MODEL:-llama3.1}
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+    depends_on:
+      litellm-db: {condition: service_healthy}
+      pii-service: {condition: service_healthy}
+      ollama-pull: {condition: service_completed_successfully}
+    expose: ["4000"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 40s
+
+  pii-api:
+    build:
+      context: ../../services/pii-api
+      secrets: [pip_ca]
+      network: host
+    image: pii-api:${PII_IMAGE_TAG:-poc}
+    restart: unless-stopped
+    environment:
+      PII_API_DATABASE_URL: postgresql+psycopg://pii:${PII_DB_PASSWORD}@pii-db:5432/pii
+      PII_API_PII_SERVICE_URL: http://pii-service:8090
+      PII_API_LITELLM_URL: http://litellm:4000
+      PII_API_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      PII_API_PII_ADMIN_TOKEN: ${PII_ADMIN_TOKEN}
+      PII_API_CHAT_MODEL: local-llama
+      PII_API_ADMIN_EMAIL: ${PII_API_ADMIN_EMAIL:-admin@example.com}
+      PII_API_ADMIN_INITIAL_PASSWORD: ${PII_API_ADMIN_INITIAL_PASSWORD}
+      # http on a workstation, so the session cookie cannot be Secure. This is
+      # the line to change first if this ever leaves the demo box.
+      PII_API_COOKIE_SECURE: "false"
+      PII_API_LOG_LEVEL: ${PII_LOG_LEVEL:-INFO}
+    depends_on:
+      pii-db: {condition: service_healthy}
+      pii-api-migrate: {condition: service_completed_successfully}
+      pii-service: {condition: service_healthy}
+      litellm: {condition: service_healthy}
+    expose: ["8080"]
+
+  pii-web:
+    build:
+      context: ../../services/pii-web
+      network: host
+    image: pii-web:${PII_IMAGE_TAG:-poc}
+    restart: unless-stopped
+    depends_on:
+      pii-api: {condition: service_started}
+    # The one published port. nginx serves the app and proxies /api, so the
+    # session cookie is same-origin and needs no CORS relaxation.
+    ports:
+      - "${POC_BIND:-127.0.0.1}:${POC_PORT:-8099}:8081"
+
+secrets:
+  pip_ca:
+    file: ${PIP_CA_BUNDLE:-/dev/null}
+
+volumes:
+  pii-db-data:
+  litellm-db-data:
+  pii-wal:
+  pii-models:
+  hf-cache:
+  ollama:

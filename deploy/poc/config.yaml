@@ -1,0 +1,27 @@
+# LiteLLM proxy config for the proof-of-concept bundle.
+#
+# The guardrails block is reproduced verbatim from
+# services/litellm-pii-guardrail/README.md -- it is what a site pastes into the
+# config.yaml it already has.
+
+model_list:
+  - model_name: local-llama
+    litellm_params:
+      model: ollama_chat/${POC_OLLAMA_MODEL}
+      api_base: http://ollama:11434
+
+guardrails:
+  - guardrail_name: "pii-ar"
+    litellm_params:
+      guardrail: pii_guardrail.ArabicPIIGuardrail
+      mode: "pre_call"
+      service_url: http://pii-service:8090
+      default_on: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+
+litellm_settings:
+  # The proxy's own logs are not an audit trail and must not become one.
+  turn_off_message_logging: true

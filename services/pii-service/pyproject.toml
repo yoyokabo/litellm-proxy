@@ -42,6 +42,17 @@ ner = [
 #
 # A deployment that does not enable tier 3 should not install it. See the
 # Dockerfile, which gates it on a build argument for exactly that reason.
+# Fetches and prepares model artifacts at deploy time, for a host that has
+# internet. Only the bootstrap container needs this -- the service itself runs
+# on [ner] plus, for tier 3, [gliner]. Kept separate so a site that bakes its
+# weights into the image never installs a conversion toolchain.
+bootstrap = [
+    "optimum[onnxruntime]>=1.23",
+    "transformers",
+    "tiktoken",
+    "protobuf",
+    "sentencepiece",
+]
 gliner = [
     "gliner>=0.2.29",
     # gliner needs these to build the mdeberta-v3 tokenizer, and does not
@@ -118,6 +129,11 @@ ignore = [
 # Generates synthetic fixtures, deliberately with a seedable non-crypto RNG:
 # reproducibility is the requirement, unpredictability is not.
 "src/pii_service/synthetic.py" = ["S311"]
+# An operator-facing CLI that happens to live in the package so it ships in the
+# image. Printing progress is the whole job -- it runs as an init container and
+# its stdout is what somebody reads while a 1.2 GB download goes by. Nothing in
+# the request path imports it.
+"src/pii_service/bootstrap.py" = ["T201"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -134,5 +150,9 @@ module = [
     "gliner.*",
     # Optional tier-2/3 wheels, absent unless the extras are installed.
     "tokenizers.*",
+    # Deploy-time only, and present only in a bootstrap image. The service
+    # never imports these; pii_service.bootstrap does, inside a function.
+    "optimum.*",
+    "transformers.*",
 ]
 ignore_missing_imports = true

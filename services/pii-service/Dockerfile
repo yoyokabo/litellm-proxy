@@ -41,6 +41,9 @@ ARG PIP_INDEX_URL=""
 ARG PIP_TRUSTED_HOST=""
 # Off by default: see the note above the install step.
 ARG PII_WITH_TIER3="false"
+# Adds the conversion toolchain used by the deploy-time model bootstrap. Only
+# a deployment that downloads its weights on startup needs it.
+ARG PII_WITH_BOOTSTRAP="false"
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 
@@ -86,6 +89,9 @@ RUN --mount=type=secret,id=pip_ca \
     && VIRTUAL_ENV=/opt/venv uv pip install --no-cache ".[ner]" \
     && if [ "${PII_WITH_TIER3}" = "true" ]; then \
          VIRTUAL_ENV=/opt/venv uv pip install --no-cache ".[gliner]"; \
+       fi \
+    && if [ "${PII_WITH_BOOTSTRAP}" = "true" ]; then \
+         VIRTUAL_ENV=/opt/venv uv pip install --no-cache ".[bootstrap]"; \
        fi
 
 # ---------------------------------------------------------------------------

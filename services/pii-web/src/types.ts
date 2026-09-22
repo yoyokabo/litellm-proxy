@@ -170,6 +170,8 @@ export interface EntityPolicyView {
 }
 
 /** The body of a PUT. Every field but entity_type is optional. */
+export type EntityAction = "MASK" | "ALLOW" | "BLOCK";
+
 export interface EntityUpsert {
   entity_type: string;
   gliner_prompt?: string | null;
