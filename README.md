@@ -55,6 +55,30 @@ normalizer that returns a bare string is a bug; see
 
 ---
 
+## Two ways to run this
+
+**On a fresh workstation, with internet — the proof of concept.** Everything in
+one command: the PII services, a LiteLLM proxy and Ollama serving a model.
+Nothing else assumed.
+
+```bash
+git clone https://github.com/yoyokabo/litellm-proxy.git
+cd litellm-proxy/deploy/poc
+./up.sh
+```
+
+It generates its own secrets, builds, downloads the models, and prints the URL
+and a one-time password. First run pulls several GB; later runs skip what is
+already there. All three detection tiers are on. See
+[`deploy/poc/README.md`](deploy/poc/README.md) — including what it is *not*,
+which matters before anyone points it at real traffic.
+
+**Alongside a LiteLLM proxy you already run — the real deployment.** The root
+`docker-compose.yml` attaches to your existing stack rather than standing up
+its own. That is the quick start below.
+
+---
+
 ## Quick start
 
 ### 1. Generating the audit pepper
@@ -532,9 +556,29 @@ not by much, and not by zero.
 
 ## Custom labels and replacement policy
 
-Two things an administrator can change at runtime, without a release: **what
-tier 3 looks for**, and **what a masked span is replaced with**. Both from the
-**Entities** tab of the admin menu, or with curl against `/admin`.
+Three things an administrator can change at runtime, without a release:
+**whether an entity is masked at all**, **what tier 3 looks for**, and **what a
+masked span is replaced with**. All from the **Entities** tab of the admin
+menu, or with curl against `/admin`.
+
+### Turning masking off for one entity
+
+Entities → pick one → **When this is found**:
+
+| Choice | On the wire | What happens |
+|---|---|---|
+| Mask it | `MASK` | The span is replaced before the model sees it |
+| Detect only — do not mask | `ALLOW` | Still detected, still audited; text passes through untouched |
+| Block the request | `BLOCK` | Refused; the caller gets types and counts, never values |
+
+"Detect only" is the one to reach for when a team says masking is breaking
+their prompts: you keep the record of who sent what and stop rewriting the
+text. `AR_ORG` ships this way already — an organisation name is rarely personal
+data on its own, and masking it mangles the prompts engineers actually send.
+
+Three choices rather than an on/off switch, because `BLOCK` is a real third
+state and a toggle would silently discard it. Changes take effect on the next
+request, with no restart.
 
 The screen leads with the consequences rather than hiding them in a tooltip,
 because "replace PERSON with John Doe" sounds harmless and is not — see
@@ -817,8 +861,10 @@ path.
 │   ├── litellm-pii-guardrail/  # the ~150-line CustomGuardrail adapter
 │   ├── pii-api/                # web backend: auth, admin queries, chat + SSE
 │   └── pii-web/                # React + Tailwind UI
-├── deploy/local-litellm/       # TEST HARNESS, not product: a stand-in proxy
-│                               # so done-criterion 3 can be run on a laptop
+├── deploy/
+│   ├── poc/                    # one-command bundle for a workstation with internet
+│   └── local-litellm/          # TEST HARNESS: a stand-in proxy so done-criterion 3
+│                               # can be run on a laptop against an existing Ollama
 └── scripts/
     ├── verify_end_to_end.py    # done-criterion 3, as a runnable check
     ├── benchmark.py            # p50/p95 per tier on CPU
