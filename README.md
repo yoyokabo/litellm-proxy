@@ -276,7 +276,7 @@ the detector.
 |---|---|---|
 | 1 | Deterministic recognizers: Egyptian national ID, mobile, IBAN, tax ID, passport, plus email and card | **On**, always |
 | 2 | Arabic NER (ONNX int8) + Egyptian address gazetteer | **Measured and chosen**: `camelbert-msa-int8`. Off by default — set the two variables below |
-| 3 | GLiNER2 for Latin script (PyTorch) | **Measured**: p95 74 ms on Latin chat text. Off by default, and **not in the image** unless built with `PII_WITH_TIER3=true` |
+| 3 | GLiNER2 for Latin script (PyTorch) | **Measured**: p95 74 ms on Latin chat text. Off by default, and **not in the image** unless built with `PII_WITH_TIER3=true` — which costs 570 MB → 6.12 GB |
 
 ### Tier 1 scoring
 
@@ -463,10 +463,18 @@ tracks upstream releases, at a cost worth being explicit about.
 
 `gliner` declares **torch and transformers as core dependencies** — not
 optional ones, and its own ONNX adapter imports torch anyway, so there is no
-configuration of the package that avoids them. Installing it takes the runtime
-image from a few hundred megabytes to several gigabytes and ends the "one
-`docker load` tarball someone can carry into an air-gapped site" property that
-tiers 1 and 2 preserve.
+configuration of the package that avoids them.
+
+Measured, both images built from this Dockerfile:
+
+| Build | Image | Contains |
+|---|---|---|
+| default | **570 MB** | onnxruntime, tokenizers |
+| `PII_WITH_TIER3=true` | **6.12 GB** | + gliner, torch, transformers |
+
+That is 10.7×, and it ends the "one `docker load` tarball someone can carry
+into an air-gapped site" property that tiers 1 and 2 preserve. Add ~1.2 GB
+again for the weights.
 
 So it is **not installed by default**. It is gated on a build argument, and a
 site running tiers 1 and 2 does not pay for it:
